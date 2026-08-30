@@ -1,5 +1,7 @@
 # fastgripper-dm v0.1.0 (standalone) Implementation Plan
 
+> **STATUS: PARTIAL (Tasks 0–3 written; Tasks 4–19 pending).** v0.0.1 "harvest" shipped ahead of this plan so the bench can test; this plan describes the v0.1 controller/port refactor on top of it.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship `fastgripper-dm` v0.1.0 — one tested Python package that drives the DM‑J4310 worm-gear gripper on a dedicated CAN channel (standalone mode), with preflight, doctor, id/watchdog provisioning, autocal, keyboard calibrate, and a `FastGripper` facade — from a new monorepo, on Linux/SocketCAN first and the macOS/gs_usb bench second.
