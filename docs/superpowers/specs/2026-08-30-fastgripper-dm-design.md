@@ -1,8 +1,9 @@
 # fastgripper-dm — design spec
 
-Date: 2026-08-30 · Status: rev 2, post-review · Owner: Alex
-Review record: `review-correctness-2026-08-30.md` (inline report, applied),
-`review-architecture-2026-08-30.md` (applied), `harvest-audit-2026-08-30.md`.
+Date: 2026-08-30 · Status: rev 3, post-review · Owner: Alex
+Review record: `review-correctness-2026-08-30.md`, `review-architecture-2026-08-30.md`
+(both applied in rev 2), `review-rev2-2026-08-30.md` (applied in rev 3),
+`harvest-audit-2026-08-30.md`.
 
 ## 1. What this is
 
@@ -22,7 +23,7 @@ owns the CAN bus**:
 | Mode | Who owns the bus | How the controller is driven | Arms |
 | --- | --- | --- | --- |
 | standalone | we do — a CAN channel dedicated to the gripper | `DamiaoCanPort` (python-can): synchronous command → reply | OpenArm, bench, any arm with a spare bus, the grippers now in manufacture |
-| adapter | the arm's SDK (its own control thread, one command array for all joints) | the SDK's loop owner calls `controller.tick()` and merges the returned command into its own array; i2rt now, MakerMods/Almond later | YAM; MakerMods, Almond |
+| adapter | the arm's SDK (its own control thread, one command array for all joints) | the SDK's loop owner calls `gripper.tick()` and merges the returned command (converted to the SDK's units) into its own array; i2rt's `MotorChainRobot` now, MakerMods/Almond later | YAM; MakerMods, Almond |
 
 **Platforms:** Linux + SocketCAN is the shipped, first-class path. macOS +
 gs_usb is the development bench and must keep working, with its quirks
@@ -124,7 +125,7 @@ fastgripper_dm/
     can_port.py        DamiaoCanPort(MotorPort) — synchronous
     config_tool.py     motor id / master id set+verify (motor alone on bus, enforced); RID registers incl. timeout (§3.6)
   adapters/
-    i2rt.py            I2rtGripper: tick-based adapter for a shared DMChainCanInterface (§3.2)
+    i2rt.py            I2rtGripper: tick-based adapter for an i2rt MotorChainRobot (§3.2)
   tools/
     autocal.py, calibrate.py, drive.py, pad.py, gui.py, doctor.py, preflight.py, _cli.py
   cli.py               setup | preflight | doctor [usb soak|watch] | id | calibrate | autocal | home | open | close | goto | status | drive | pad | gui
@@ -177,23 +178,40 @@ class GripperController:
 ```
 
 - **Standalone:** `run()` loops `fb = port.command(self.tick(fb, dt))`.
-- **Adapter (i2rt, YAM):** i2rt's `DMChainCanInterface` runs its own
-  250 Hz thread and `set_commands()` replaces the commands of **all**
-  joints each call (dm_driver.py:744-765) and returns *cached* state
-  (dm_driver.py:715-734). So no per-frame port is possible. The adapter
-  `I2rtGripper` wraps the chain **read side only**: it derives the wrapped
-  position as `get_joint_pos(idx) * SPAN − POS_WINDOW`, which requires the
-  chain to be built with `gripper_limits_override = [−12.5, +12.5]`
-  (so101_teleop.py:303-306, 339, 398; gripper.py:113, 142) — i2rt's own
-  `absolute_positions` are already unwrapped and must not be fed to the
-  tracker. The **owner of the chain** (the YAM teleop, or a robot class)
-  calls `cmd = gripper.tick(fb, dt)` each cycle and merges `cmd` into its
-  full 7-joint command array before `command_joint_state` / `set_commands`.
-  The returned feedback is the latest cached state, which is fine for a
-  P-loop on measured state; the design does not assume reply-to-this-frame
-  in adapter mode. Exactly one writer to the chain — the owner; the adapter
-  never calls `set_commands` itself. `motor_chain_robot`'s background loop
-  and a controller `run()` are never active on the same chain.
+- **Adapter (i2rt, YAM):** the object wrapped is i2rt's **`MotorChainRobot`**
+  from `get_yam_robot(channel=…, gripper_limits_override=[−POS_WINDOW, +POS_WINDOW])`
+  (so101_teleop.py:300-306, gripper.py:110-114; the override is a
+  `get_robot()` argument that builds the robot's `JointMapper`,
+  get_robot.py:137,209-210, motor_chain_robot.py:159-160). Beneath it,
+  `DMChainCanInterface` runs a 250 Hz thread whose `set_commands()` replaces
+  the commands of **all** joints (dm_driver.py:744-765) and whose
+  `read_states()` is cached (dm_driver.py:715-734) — which is why no
+  per-frame sync port exists in this mode. `I2rtGripper` never touches the
+  chain; it uses the robot surface only:
+  - **read:** `position = robot.get_joint_pos()[idx] * SPAN − POS_WINDOW`
+    (so101_teleop.py:398, gripper.py:143); `velocity =
+    robot.get_observations()["gripper_vel"][0] * SPAN`; `torque =
+    obs["gripper_eff"][0]` (so101_teleop.py:407-409; motor_chain_robot.py:569);
+    `error_code` is **not available** on this path — fault handling is
+    delegated to i2rt's own recovery (`_try_recover_motors`), and
+    `Feedback.error_code` is reported as 1 (enabled).
+  - **write:** the **owner** (the YAM teleop, or a robot class) calls
+    `cmd = gripper.tick(fb, dt)` each cycle and merges it into its full
+    7-joint command *after converting to i2rt's normalised command space*:
+    the `JointMapper` multiplies the gripper velocity by the joint range
+    (= SPAN), so `vel[idx] = cmd.vel / SPAN` (so101_teleop.py:451);
+    `pos[idx]` is a valid placeholder (kp = 0 so it is ignored); `kp/kd`
+    pass through. Then `robot.command_joint_state(...)`.
+  - **single writer:** `MotorChainRobot`'s server thread (started in its
+    `__init__`, motor_chain_robot.py:237-238) is the only writer to the
+    chain; the owner updates commands solely via `command_joint_state`;
+    never a second `MotorChainRobot` on the same channel, never direct
+    `set_commands`, never a controller `run()` in this mode.
+  - The returned feedback is the latest cached state, which is fine for a
+    P-loop on measured state. On this path `get_joint_pos` is already
+    continuous (i2rt accumulates deltas, dm_driver.py:501-513), so the
+    controller's tracker only applies the park offset — its wrap counting
+    is a no-op here and load-bearing only for the standalone per-frame port.
 
 Algorithm (ported from `so101_teleop.py` v7, the only copy with the torque
 cap; `fastgripper_yam/gripper.py` shares the tracker and velocity mode but
@@ -226,10 +244,12 @@ has no cap and different gains, and is superseded):
   (dm4310.py:111, `round((pending − wrapped)/SPAN)·SPAN`) is **retired**;
   autocal uses the controller's tracker. **New, not ported:** at connect
   the wrapped boot reading must agree with `last_wrapped` within
-  `park_tolerance_rad` (profile; default 0.35 rad ≈ the observed settle
-  after torque-off) or `auto` mode stall-homes (default) / refuses
-  (`auto_fallback="error"`). Tested in sim; verified on the bench in the
-  damage-control drill.
+  `park_tolerance_rad` or `auto` mode stall-homes (default) / refuses
+  (`auto_fallback="error"`). The default is **provisional (0.35 rad) and
+  unmeasured**: the damage-control drill measures shaft drift across N
+  power-off/on cycles and the tolerance is set above the maximum observed
+  drift before `dm-v0.1.0` (§10 open item). Tested in sim; verified in
+  the drill.
 - **Percent API:** 0 = closed mark, 1 = open mark, in the unwrapped frame;
   jaw direction via `close_dir`.
 
@@ -284,9 +304,12 @@ g = FastGripper.standalone(interface="socketcan", channel="can0", gripper="defau
 with g:                       # connect(home="auto") … disconnect() parks + disables
     g.home(); g.goto(0.4); g.close(); print(g.state)
 
-from fastgripper_dm.adapters.i2rt import I2rtGripper
-grip = I2rtGripper(chain, joint_index=6, gripper="yam")   # read side only
-cmd = grip.tick(dt)                                        # owner merges cmd into its command array
+from fastgripper_dm.adapters.i2rt import I2rtGripper, to_i2rt_command
+robot = get_yam_robot(channel="0", gripper_limits_override=np.array([-POS_WINDOW, POS_WINDOW]))
+grip = I2rtGripper(robot, joint_index=6, gripper="yam")   # reads robot.get_joint_pos / get_observations only
+cmd = grip.tick(dt)                                        # real units
+vel[6], pos[6], kp[6], kd[6] = to_i2rt_command(cmd)        # vel / SPAN etc.
+robot.command_joint_state(pos=pos, vel=vel, kp=kp, kd=kd)  # the owner is the only writer
 ```
 
 ### 3.6 Motor watchdog — mandatory
@@ -298,14 +321,23 @@ SIGKILLed, panics, or its USB is yanked (the damage-control drill), a
 disabled watchdog means the worm keeps pushing into a stop at `TMAX` until
 someone pulls the power. Therefore:
 
-- `setup` writes RID 9 to `profile.watchdog_ms` (default **500 ms**; the
-  50 Hz loop sends every 20 ms, so this tolerates a 25-cycle stall) and
-  reads it back; a mismatch fails `setup`.
-- `preflight` verifies the register each run — NO-GO on mismatch or 0.
-- A watchdog fault (`loss communication`) recovers through the port's
-  clear/enable path once frames resume.
-- Docs state the trade-off plainly: a host stall > 500 ms drops torque
-  (the jaws hold anyway — the worm self-locks), which is the safe direction.
+- RID 9 `timeout` is a uint32 (motor_config_tool/utils.py:120); units are
+  milliseconds by bench measurement — the arm motors' value 8000 produced
+  the fault after an 8 s gap (2026‑08‑29 log: 91 s host sleep, fault at 8 s).
+- Effect: the motor **latches** a `loss communication` fault
+  (`error_code ≥ 8`) and drops torque — the safe direction, since the worm
+  self-locks. It does not silently resume: recovery is an explicit
+  `clear_error` + `enable`, done by `DamiaoCanPort` on the standalone path
+  and by i2rt's `_try_recover_motors` (fork commit `f732e4f`) on the
+  adapter path.
+- `setup` writes RID 9 to `profile.watchdog_ms` and reads it back; a
+  mismatch fails `setup`. `preflight` verifies it every run — NO-GO on
+  mismatch or 0.
+- Default **500 ms** for the standalone 50 Hz loop (a 25-cycle stall). The
+  `yam` preset must confirm on the bench that 500 ms exceeds the worst-case
+  inter-frame gap under i2rt retry storms on the shared 250 Hz chain
+  (`I2RT_CAN_RESPONSE_TIMEOUT` up to 0.2 s × retries) or carry its own
+  value — the field is per-profile precisely for this.
 
 ## 4. Behaviour on failure
 
@@ -315,8 +347,8 @@ someone pulls the power. Therefore:
 | motor latched fault (comm-loss, overload) | port `clear_error` + `enable` with backoff (10 × 0.3 s); controller pauses the goal, `state.faulted` |
 | adapter wedge (TX, no echo) | `preflight`/`doctor` name it and the fix (PSU on? replug adapter); never software-reset the adapter |
 | park mismatch / missing | stall-home (default) or refuse (`auto_fallback="error"`) |
-| host process killed / USB yanked | motor watchdog (§3.6) disables within `watchdog_ms`; worm self-locks; next `preflight` shows the latched fault and clears it on connect |
-| host stall > watchdog | same as above, then automatic recovery when frames resume |
+| host process killed / USB yanked | motor watchdog (§3.6) latches `loss communication` within `watchdog_ms`, torque off; worm self-locks; next `preflight` shows the latched fault; connect clears + enables |
+| host stall > watchdog | same latch; cleared by `DamiaoCanPort` (standalone) or i2rt recovery (adapter) once frames resume |
 | Ctrl‑C / normal exit | park → disable → drain → `os._exit` via `_cli.run` |
 
 ## 5. Testing
@@ -335,8 +367,13 @@ someone pulls the power. Therefore:
   same command, no I/O).
 - **Protocol:** encode/decode golden tests from captured frames, including
   a re-ID'd motor (0x20) and the status-nibble normalisation.
-- **Adapter:** `I2rtGripper` tested against a fake chain exposing
-  `get_joint_pos`/cached state; asserts it never calls `set_commands`.
+- **Adapter:** `I2rtGripper` tested against a fake `MotorChainRobot`
+  surface (`get_joint_pos`, `get_observations`, `command_joint_state`):
+  (a) a known normalised `get_joint_pos`/`gripper_vel` round-trips to the
+  expected real-unit `Feedback` (`× SPAN − POS_WINDOW`, `× SPAN`); (b) a
+  known `MitCommand.vel` lands in the merged array as `vel / SPAN` via
+  `to_i2rt_command`; (c) the adapter never calls `set_commands` or
+  `command_joint_state` itself.
 - **Hardware drills** (`drills/cards/`): cold-start-linux, cold-start-mac,
   beat-to-quarters (< 3 min daily start), damage-control (SIGKILL the tool
   mid-move → motor stops within `watchdog_ms`; yank USB; hand-move jaws
@@ -359,8 +396,9 @@ someone pulls the power. Therefore:
 3. Standalone CLI end-to-end on the bench gripper (Mac gs_usb), then a Linux
    SocketCAN box (drill cold-start-linux) — **`dm-v0.1.0`**, the release for
    the grippers now in manufacture.
-4. `adapters/i2rt.py` on the fork; `bench/yam/so101_teleop.py` switched to
-   `I2rtGripper.tick()`; YAM drill passes → `YAM Test` folder archived.
+4. `adapters/i2rt.py` on the fork (wrapping `MotorChainRobot`);
+   `bench/yam/so101_teleop.py` switched to `I2rtGripper.tick()` +
+   `to_i2rt_command`; YAM drill passes → `YAM Test` folder archived.
 5. Move `lerobot-robot-fastgripper` in verbatim; CI matrix; the two release
    workflows; serial-number grep gate.
 6. Archive `fastgripper-openarm`, `fastgripper-yam`, `dm-j4310-test`,
@@ -421,6 +459,10 @@ of each drill is expected to fail; the issue list is the backlog.
 - Profiles replace module-level physical constants; `_cli.run` is the one exit path.
 - One gripper per bus/process in v0.
 - `bench/yam` cal JSONs live in the public repo (no secrets; serials do not).
+- Open: `park_tolerance_rad` — provisional 0.35 rad; measure drift over
+  power cycles in the damage-control drill and set above max observed,
+  before `dm-v0.1.0`.
+- Open: `yam` preset `watchdog_ms` — confirm 500 ms vs i2rt retry storms.
 - Open: `MAX_DELTA_RAD` for the YAM teleop (1.8 vs 2.5) — bench decision.
 
 ## Appendix A — harvest audit (summary; full report: `harvest-audit-2026-08-30.md`)
