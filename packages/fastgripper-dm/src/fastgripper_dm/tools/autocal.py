@@ -292,6 +292,8 @@ def main() -> None:
 
         fb = None
         for _ in range(20):
+            motor.clear_error()
+            time.sleep(0.01)
             motor.enable()
             fb = motor.read_feedback(timeout=0.25)
             if fb:

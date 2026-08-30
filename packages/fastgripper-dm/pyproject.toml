@@ -5,7 +5,7 @@ description = "FastGripper worm-gear gripper driver for Damiao DM-J4310 actuator
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-dependencies = ["python-can>=4.0", "pyusb>=1.2", "gs_usb>=0.3.0"]
+dependencies = ["python-can>=4.0,<4.6", "pyusb>=1.2", "gs_usb>=0.3.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

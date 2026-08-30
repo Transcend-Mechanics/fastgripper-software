@@ -148,6 +148,11 @@ class DM4310:
     def disable(self) -> None:
         self._special(0xFD)
 
+    def clear_error(self) -> None:
+        """Clear a latched fault (e.g. 'communication loss' after the watchdog
+        tripped). The motor must then be re-enabled."""
+        self._special(0xFB)
+
     def set_zero(self) -> None:
         """Save the current position as zero (within the single +/-P_MAX window)."""
         self._special(0xFE)

@@ -87,11 +87,19 @@ def main() -> None:
         motor = DM4310(bus, can_id=motor_id, master_id=master_id)
         tracker = MultiTurnTracker()
 
-        # enable + get first position fix (retry: first frames can be lossy)
+        # enable + get first position fix (retry: first frames can be lossy).
+        # A latched fault (red flashing LED, e.g. the comm-loss watchdog after an
+        # adapter wedge) must be cleared first or the motor ignores enable.
         fb = None
         for _ in range(20):
+            motor.clear_error()
+            time.sleep(0.01)
             motor.enable()
             fb = motor.read_feedback(timeout=0.25)
+            if fb and fb.faulted:
+                print(f"  motor fault '{fb.error_text}' -- clearing", flush=True)
+                fb = None
+                continue
             if fb:
                 break
         if fb is None:
@@ -140,6 +148,13 @@ def main() -> None:
                 # velocity command via MIT (kp=0, kd damps to the target vel)
                 motor.mit_control(0.0, vel, 0.0, 1.0, 0.0)
                 fb = motor.read_feedback(timeout=0.05)
+                if fb and fb.faulted:
+                    print(f"\n!! motor fault '{fb.error_text}' -- clearing and re-enabling", flush=True)
+                    vel = 0.0
+                    motor.clear_error()
+                    time.sleep(0.01)
+                    motor.enable()
+                    continue
                 if fb:
                     tracker.update(fb.position)
                     peak_torque = max(peak_torque, abs(fb.torque))
