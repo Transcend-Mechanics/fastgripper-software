@@ -29,7 +29,7 @@ fastgripper-dm setup --interface socketcan --channel can0 --motor_id 0x07 --mast
 ## 3. Every session
 
 ```sh
-fastgripper-dm preflight     # expect: motor answers · watchdog 500 ms · cal … → GO
+fastgripper-dm preflight     # expect: motor answers · watchdog (RID 9 = 8000, the arm motors' proven value) · cal … → GO
 ```
 
 ## 4. Calibrate (once per unit; jaws empty)

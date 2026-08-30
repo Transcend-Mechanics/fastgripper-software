@@ -135,7 +135,7 @@ def main() -> None:
     p.add_argument("--channel")
     p.add_argument("--motor_id", type=hexint)
     p.add_argument("--master_id", type=hexint)
-    p.add_argument("--watchdog_ms", type=int, default=500)
+    p.add_argument("--watchdog_ms", type=int, default=8000, help="RID 9 value; unit under investigation (8000 = the arm motors' proven setting)")
 
     p = sub.add_parser("preflight", help="no-motion go/no-go")
     p.add_argument("--interface"); p.add_argument("--channel")

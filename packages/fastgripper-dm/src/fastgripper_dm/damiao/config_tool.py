@@ -25,7 +25,7 @@ REGISTERS = {           # name -> (rid, fmt)
     "timeout": (9, "<I"),   # comm-loss watchdog, ms; 0 = disabled
     "sw_ver": (14, "<I"),
 }
-DEFAULT_WATCHDOG_MS = 500
+DEFAULT_WATCHDOG_MS = 8000   # UNIT UNCERTAIN: 500 faulted constantly at 50 Hz (2026-08-30); 8000 is the value the YAM arm motors run at 250 Hz
 
 
 class RegisterClient:

@@ -21,6 +21,6 @@ fastgripper-dm drive 40             # 40 % and exit
 
 Docs: `docs/fastgripper-dm/` at the repo root (quickstart-linux, quickstart-mac, troubleshooting).
 
-Safety: the `setup` step writes a 500 ms comm-loss watchdog into the motor so a
+Safety: the `setup` step writes a comm-loss watchdog into the motor so a
 crashed host cannot leave the worm pushing into a stop. `preflight` refuses to
 pass with the watchdog disabled.
