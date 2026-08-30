@@ -1,0 +1,12 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+dist/
+build/
+*.egg-info/
+logs/
+datasets/
+checkpoints/
+bench/local.toml
+.DS_Store

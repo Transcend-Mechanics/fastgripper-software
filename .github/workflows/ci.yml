@@ -1,0 +1,18 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make gate
+  fastgripper-dm:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: cd packages/fastgripper-dm && uv python install ${{ matrix.python }} && uv sync --python ${{ matrix.python }} --extra dev && uv run pytest -q
