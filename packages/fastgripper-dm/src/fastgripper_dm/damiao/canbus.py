@@ -133,16 +133,21 @@ def open_bus(interface: str = "auto", channel: str | None = None) -> can.BusABC:
         # only if they don't.
         try:
             bus = _open()
-        except Exception:
-            bus = None
-        if bus is not None and _bus_alive(bus):
+        except Exception as e:
+            # Say WHY: a missing `gs_usb` package or an unpatched pyusb call
+            # looks identical to a dead bus otherwise (seen live 2026-08-30).
+            raise BusDead(
+                f"could not open the gs_usb adapter: {type(e).__name__}: {e}\n"
+                "  - is the adapter plugged in (VID 0x1D50 / PID 0x606F)?\n"
+                "  - is the `gs_usb` package installed in this environment?\n"
+                "  - macOS: run patches/setup-mac.sh <venv> once") from e
+        if _bus_alive(bus):
             _arm_drain_on_shutdown(bus)
             return bus
-        if bus is not None:
-            try:
-                bus.shutdown()
-            except Exception:
-                pass
+        try:
+            bus.shutdown()
+        except Exception:
+            pass
         # Do NOT software-reset: on this Mac dev.reset() knocks the adapter
         # off the USB bus entirely ([Errno 19] until physical replug) --
         # proven 2026-07-21. Report honestly and let the human replug.

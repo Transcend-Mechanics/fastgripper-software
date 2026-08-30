@@ -32,8 +32,8 @@ def main() -> None:
                         help="comma-separated extra motor IDs to ping (e.g. arm joints 1,2,3,4,5,6)")
     args = parser.parse_args()
     global ARM_IDS, GRIPPER_ID
-    GRIPPER_ID = args.motor_id if args.motor_id != 0x01 else GRIPPER_ID
-    ARM_IDS = [int(x, 0) for x in args.ids.split(",")] if args.ids else []
+    GRIPPER_ID = args.motor_id
+    ARM_IDS = [i for i in ([int(x, 0) for x in args.ids.split(",")] if args.ids else []) if i != GRIPPER_ID]
 
     with open_bus(args.interface, args.channel) as bus:
         echo_seen = False
