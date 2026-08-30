@@ -34,7 +34,11 @@ class RegisterClient:
         self.response_timeout = response_timeout
         self.retries = retries
 
-    def _txrx(self, motor_id: int, data: list[int]) -> can.Message:
+    def _txrx(self, motor_id: int, data: list[int], required: bool = True,
+              accept_ids: tuple[int, ...] = ()) -> can.Message | None:
+        """Send a special frame; return the motor's reply. Replies arrive on 0x7FF with
+        data[0] == motor_id and data[2] == op; some firmware answers the flash-save
+        (0xAA) inconsistently, so callers may pass required=False and verify by read-back."""
         last = None
         for _ in range(self.retries):
             self.bus.send(can.Message(arbitration_id=CONFIG_ID, data=bytes(data), is_extended_id=False))
@@ -43,11 +47,13 @@ class RegisterClient:
                 m = self.bus.recv(timeout=0.02)
                 if m is None or not m.is_rx or len(m.data) != 8:
                     continue
-                # replies come from the motor with data[0] == motor_id (or on 0x7FF)
-                if m.data[0] == (motor_id & 0xFF) and m.data[2] in (0x33, 0x55, 0xAA):
+                ok_ids = {motor_id & 0xFF, *(i & 0xFF for i in accept_ids)}
+                if m.data[0] in ok_ids and m.data[2] == data[2]:
                     return m
                 last = m
             time.sleep(0.01)
+        if not required:
+            return None
         raise TimeoutError(f"motor 0x{motor_id:02X}: no register reply (last frame: {last})")
 
     def read(self, motor_id: int, name: str):
@@ -58,11 +64,16 @@ class RegisterClient:
     def write(self, motor_id: int, name: str, value) -> None:
         rid, fmt = REGISTERS[name]
         payload = list(struct.pack(fmt, value))
-        self._txrx(motor_id, [motor_id & 0xFF, 0x00, 0x55, rid] + payload)
+        # the reply to an id write already carries the NEW id (live 2026-08-30:
+        # "07 00 55 08 07 00 00 00" on the new master id), so accept it too
+        accept = (int(value),) if name == "id" else ()
+        self._txrx(motor_id, [motor_id & 0xFF, 0x00, 0x55, rid] + payload, accept_ids=accept)
 
-    def save(self, motor_id: int, name: str) -> None:
+    def save(self, motor_id: int, name: str) -> bool:
+        """Persist a register to flash. Returns True if the motor acknowledged; a silent
+        save is not an error by itself -- verify with a read-back after a power cycle."""
         rid, _ = REGISTERS[name]
-        self._txrx(motor_id, [motor_id & 0xFF, 0x00, 0xAA, rid, 0, 0, 0, 0])
+        return self._txrx(motor_id, [motor_id & 0xFF, 0x00, 0xAA, rid, 0, 0, 0, 0], required=False) is not None
 
     def probe(self, motor_id: int) -> bool:
         try:
@@ -106,11 +117,8 @@ def set_motor_id(client: RegisterClient, old_id: int, new_id: int, master_id: in
     client.save(old_id, "master_id")
     client.write(old_id, "id", new_id)
     for target in (old_id, new_id):        # after the id write the motor may answer on either
-        try:
-            client.save(target, "id")
+        if client.save(target, "id"):
             break
-        except TimeoutError:
-            continue
     got_id, got_master = int(client.read(new_id, "id")), int(client.read(new_id, "master_id"))
     if (got_id, got_master) != (new_id, master):
         raise RuntimeError(f"id write failed: wanted 0x{new_id:02X}/0x{master:02X}, motor reports 0x{got_id:02X}/0x{got_master:02X}")
