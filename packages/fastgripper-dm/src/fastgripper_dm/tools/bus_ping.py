@@ -79,11 +79,12 @@ def main() -> None:
         if not echo_seen:
             print("\n-> NO ACK on the wire: adapter wedge or wiring/power. "
                   "Replug the adapter USB and re-run.")
-        elif not any(i in answered for i in ARM_IDS):
+        elif ARM_IDS and not any(i in answered for i in ARM_IDS):
             print("\n-> Bus alive but the ARM is silent: latched comm-fault or no arm power. "
                   "POWER-CYCLE THE 24V PSU, then re-run.")
         elif GRIPPER_ID not in answered:
-            print("\n-> Bus + arm alive but the gripper is silent: check its power tap / IDs.")
+            print(f"\n-> Bus alive but motor 0x{GRIPPER_ID:02X} is silent: power, wiring, or wrong "
+                  "--motor_id (a factory motor is 0x01).")
         else:
             print("\n-> Everything answers. The bus is fine.")
 
