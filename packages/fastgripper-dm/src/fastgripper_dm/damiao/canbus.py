@@ -136,8 +136,12 @@ def open_bus(interface: str = "auto", channel: str | None = None) -> can.BusABC:
         except Exception as e:
             # Say WHY: a missing `gs_usb` package or an unpatched pyusb call
             # looks identical to a dead bus otherwise (seen live 2026-08-30).
+            hint = ""
+            if "Errno 32" in str(e) or "Errno 19" in str(e) or "Pipe error" in str(e):
+                hint = ("  -> this is a WEDGED adapter (stalled USB endpoint): unplug its USB-C, wait 5 s, "
+                        "plug it back in (LED green at rest), rerun. No software reset can clear it.\n")
             raise BusDead(
-                f"could not open the gs_usb adapter: {type(e).__name__}: {e}\n"
+                f"could not open the gs_usb adapter: {type(e).__name__}: {e}\n" + hint +
                 "  - is the adapter plugged in (VID 0x1D50 / PID 0x606F)?\n"
                 "  - is the `gs_usb` package installed in this environment?\n"
                 "  - macOS: run patches/setup-mac.sh <venv> once") from e
