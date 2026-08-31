@@ -7,7 +7,7 @@ import time
 
 from .calstore import default_cal_path, entry_profile, get_entry, load_store, save_store
 from .controller import GripperController
-from .port import Feedback, MitCommand, MotorPort, PortError, SPAN
+from .port import MitCommand, MotorPort, PortError, SPAN
 from .tracker import MultiTurnTracker
 
 
@@ -99,11 +99,11 @@ class FastGripper:
     def _safe_disable_close(self) -> None:
         try:
             self.port.disable()
-        except PortError:
+        except Exception:
             pass
         try:
             self.port.close()
-        except PortError:
+        except Exception:
             pass
 
     def home_against_stop(self) -> None:

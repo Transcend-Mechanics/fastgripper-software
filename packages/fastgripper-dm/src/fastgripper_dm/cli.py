@@ -65,7 +65,7 @@ def _run_tool(tool_main, argv: list[str], prog: str) -> None:
 
 def cmd_setup(args, extra):
     from .damiao.canbus import open_bus
-    from .damiao.config_tool import DEFAULT_WATCHDOG_MS, RegisterClient, read_watchdog_ms, set_watchdog_ms
+    from .damiao.config_tool import RegisterClient, read_watchdog_ms, set_watchdog_ms
 
     cfg = _load_config()
     for key in ("interface", "channel", "motor_id", "master_id"):
@@ -164,7 +164,7 @@ def cmd_status(args, extra):
         g.connect()
         e = g._entry
         pos = g.position
-        pct = 100.0 * (pos - e["closed"]) / (e["open"] - e["closed"]) if pos is not None else None
+        pct = 100.0 * (pos - e["closed"]) / (e["open"] - e["closed"]) if pos is not None and e["open"] != e["closed"] else None
         print(f"entry '{g._gripper_name}': open {e['open']:+.2f} closed {e['closed']:+.2f} rad")
         print(f"position (this window): {pos:+.2f} rad" + (f" ~ {pct:.0f}% open" if pct is not None else ""))
         print("NOTE: 'off' mode has no absolute frame; use preflight/park for trusted state")

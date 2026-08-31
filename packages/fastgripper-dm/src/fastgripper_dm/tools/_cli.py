@@ -20,6 +20,9 @@ def run(main) -> None:
     except PortError as e:
         print(str(e), file=sys.stderr)
         code = 1
+    except TimeoutError as e:
+        print(str(e), file=sys.stderr)
+        code = 1
     except SystemExit as e:
         if isinstance(e.code, str):
             print(e.code, file=sys.stderr)
