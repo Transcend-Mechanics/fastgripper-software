@@ -8,5 +8,5 @@ in v0.1.
 from .facade import FastGripper, HomingError
 from .profile import GripperProfile, PRESETS, TMAX_CAP
 
-__version__ = "0.1.0"   # unchanged; the single bump to 0.1.0 happens in Task 12
+__version__ = "0.1.0"
 __all__ = ["FastGripper", "HomingError", "GripperProfile", "PRESETS", "TMAX_CAP", "__version__"]
