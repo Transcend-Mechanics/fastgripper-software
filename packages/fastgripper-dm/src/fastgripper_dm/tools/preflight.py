@@ -86,6 +86,7 @@ def collect(bus, motor_id: int, master_id: int):
 def run_preflight(cfg: dict, interface: str | None = None, channel: str | None = None) -> bool:
     from ..calstore import get_entry
     from ..damiao.canbus import open_bus
+    from ..port import PortError
 
     motor_id = int(cfg.get("motor_id", 0x01))
     master_id = int(cfg.get("master_id", 0x00))
@@ -102,7 +103,7 @@ def run_preflight(cfg: dict, interface: str | None = None, channel: str | None =
     try:
         with open_bus(interface or cfg.get("interface", "auto"), channel or cfg.get("channel")) as bus:
             echo, status, watchdog = collect(bus, motor_id, master_id)
-    except SystemExit as e:
+    except (PortError, SystemExit) as e:
         bus_error = str(e).splitlines()[0]
     findings = evaluate(echo, status, watchdog, want, entry, bus_error)
     for f in findings:
