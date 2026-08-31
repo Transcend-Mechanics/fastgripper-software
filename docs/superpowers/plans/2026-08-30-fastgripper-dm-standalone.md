@@ -17,7 +17,7 @@
 ## Global Constraints
 
 - Distribution `fastgripper-dm`, import `fastgripper_dm`, console script `fastgripper-dm`. Package dir `packages/fastgripper-dm/` with `src/` layout.
-- `requires-python = ">=3.10"`; runtime deps exactly `python-can>=4.0` and `pyusb>=1.2`; dev deps `pytest`. No git-URL dependencies anywhere in metadata.
+- `requires-python = ">=3.10"`; runtime deps `python-can>=4.0,<4.6` (4.6.1 wedged the adapter live; 4.5.0 proven), `pyusb>=1.2`, `gs_usb>=0.3.0`; dev deps `pytest`. No git-URL dependencies anywhere in metadata. The live `pyproject.toml` (version 0.0.1, these pins) is authoritative over Task 1's superseded snippet.
 - Not a uv workspace: the repo root has no `pyproject.toml`; each package locks independently.
 - Every physical constant that differs per gripper is a `GripperProfile` field — never a module-level constant: `closed_only, single_touch, span_from_closed, contact_torque, probe_tmax, probe_vel, seek_vel, margin, backoff, touch_tol, tmax_nm, vmax, sw_kp, park_tolerance_rad, watchdog_ms`.
 - `TMAX_CAP = 2.0` Nm: any profile with `tmax_nm > 2.0` is refused by `preflight` and by `GripperController.__init__`.
@@ -25,7 +25,7 @@
 - Cal store is format 2: `{"format": 2, "grippers": {name: entry}}`; entry fields `open, closed, last_position, last_wrapped, span, stop_open, stop_closed, stop_span, span_from_closed, method, calibrated_at, touched_at, homed_at, motor_id, master_id, close_dir, profile`. Atomic writes only.
 - File locations: explicit `--cal/--config PATH` → `$FASTGRIPPER_DM_HOME/` → `~/.config/fastgripper-dm/`. **Never** the current working directory.
 - Every CLI exits through `fastgripper_dm.tools._cli.run` (motor disable → bus drain → `os._exit`). Never inline `os._exit`.
-- `canbus.open_bus` never calls `usb.core.Device.reset()`; a dead gs_usb bus raises `BusDead` (a `PortError`), never `SystemExit`.
+- `canbus.open_bus` never calls `usb.core.Device.reset()`. One `BusDead` exists: `port.BusDead(PortError)`; Task 2 migrates `canbus.py` to raise it (today's `canbus.BusDead` subclasses `SystemExit`), updates `tools/preflight.py` to catch `PortError` instead of `SystemExit`, and extends `tools/_cli.run` to print `PortError`s and exit 1.
 - No device serial numbers or `/dev/cu.usbmodem…` paths in the repo (CI grep gate, Task 1).
 - Commit after every task with the trailer lines: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` and `Claude-Session: https://claude.ai/code/session_01WamdJVNm9PA62Q8pJ4d25b`.
 - Out of scope for this plan (Plan 1b): `tools/pad.py`, `tools/gui.py` ports; Plan 2: i2rt adapter; Plan 3: LeRobot move + `release-lerobot.yml`; Plan 4: drills.
@@ -295,7 +295,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v4
       - run: cd packages/fastgripper-dm && uv python install ${{ matrix.python }} && uv sync --python ${{ matrix.python }} --extra dev && uv run pytest -q
 ```
 
@@ -380,17 +380,7 @@ from typing import Protocol
 POS_WINDOW = 12.5          # DM-J4310 MIT feedback window: +/-12.5 rad
 SPAN = 2 * POS_WINDOW      # 25 rad per wrap
 
-FAULT_CODES = {
-    0x0: "disabled",
-    0x1: "enabled",
-    0x8: "overvoltage",
-    0x9: "undervoltage",
-    0xA: "overcurrent",
-    0xB: "MOS overtemperature",
-    0xC: "motor coil overtemperature",
-    0xD: "communication loss",
-    0xE: "overload",
-}
+from .damiao.dm4310 import FAULT_CODES  # single fault table for the whole package
 
 
 @dataclass(frozen=True)
@@ -520,8 +510,8 @@ def test_position_before_update_raises():
 The worm gear cannot be back-driven, so a saved park position is adopted
 EXACTLY (offset = park - first_wrapped): the motor's own frame resets modulo
 2*pi on every power cycle, so modular reconciliation is never safe. Ported
-from so101_teleop.py (v7); the window-rounding variant in dm4310.py is
-retired.
+from so101_teleop.py (v7). The window-rounding variant in dm4310.py is
+retired on the controller path; autocal/drive still use it until Plan 2.
 """
 
 from __future__ import annotations
@@ -594,7 +584,7 @@ class MultiTurnTracker:
   @dataclass class GripperProfile: closed_only=False; single_touch=False; span_from_closed=30.0;
       contact_torque=0.30; probe_tmax=0.5; probe_vel=0.8; seek_vel=2.5; margin=0.75; backoff=2.0;
       touch_tol=0.2; tmax_nm=2.0; vmax=24.0; sw_kp=24.0; stall_torque_frac=0.75; stall_time_s=0.4;
-      park_tolerance_rad=0.35; watchdog=8000; close_dir=1
+      park_tolerance_rad=0.35; watchdog_ms=8000; close_dir=1
       to_dict() -> dict; from_dict(d) -> GripperProfile (unknown keys ignored); validate() raises ValueError
   PRESETS: dict[str, GripperProfile]  # "openarm", "yam" (span 33.5), "ur" (closed_only, single_touch)
   calstore.entry_profile(entry: dict) -> GripperProfile   # entry.get("profile", {}) merged over defaults
@@ -611,7 +601,7 @@ from fastgripper_dm.profile import PRESETS, TMAX_CAP, GripperProfile
 
 def test_defaults_describe_a_two_hardstop_gripper():
     p = GripperProfile()
-    assert not p.closed_only and not p.single_touch and p.tmax_nm == 2.0 and p.watchdog == 8000
+    assert not p.closed_only and not p.single_touch and p.tmax_nm == 2.0 and p.watchdog_ms == 8000
 
 
 def test_presets():
@@ -672,7 +662,7 @@ class GripperProfile:
     stall_torque_frac: float = 0.75    # stall when |torque| > frac * tmax_nm ...
     stall_time_s: float = 0.4          # ... for this long
     park_tolerance_rad: float = 0.35   # PROVISIONAL: boot wrapped vs last_wrapped (spec §10)
-    watchdog: int = 8000               # RID 9 raw value; unit under investigation (2026-08-30)
+    watchdog_ms: int = 8000            # RID 9 raw value; unit under investigation (2026-08-30)
     close_dir: int = 1                 # velocity sign that closes the jaws
 
     def validate(self) -> None:
@@ -722,8 +712,7 @@ def entry_profile(entry: dict):
 - Produces:
   ```python
   class SimulatedWormGripper(MotorPort):
-      def __init__(self, stop_open=-31.0, stop_closed=+3.0, start=+1.0, friction=0.25,
-                   tau_response=0.05, dt=0.02): ...
+      def __init__(self, stop_open=-31.0, stop_closed=+3.0, start=+1.0, friction=0.25, dt=0.02): ...
       pos_window = 12.5
       # MotorPort methods; plus test hooks:
       true_position: float          # unwrapped ground truth
@@ -731,8 +720,8 @@ def entry_profile(entry: dict):
       drop_next(n: int)             # next n command()s raise PortError
       inject_fault(code: int)       # feedback reports this error_code until clear_error()
   ```
-  Torque model is EXACTLY the motor's: `tau = kd * (vel_cmd - velocity) + tau_ff`; a first-order
-  lag (`tau_response`) drives velocity toward `vel_cmd`; friction opposes motion; hard stops are
+  Torque model is EXACTLY the motor's, computed against the REPORTED velocity: a single inertia
+  integrator drives velocity from the previous step's torque; friction opposes motion; hard stops are
   springs (2 Nm/rad past the stop) the shaft cannot pass. `command()` returns feedback with
   `position` wrapped into ±12.5.
 
@@ -753,14 +742,15 @@ def run(sim, cmd, n):
 
 
 def test_moves_and_wraps():
-    sim = SimulatedWormGripper(start=12.0)
+    # drive toward the OPEN stop (negative) -- the direction with >12.5 rad of room
+    sim = SimulatedWormGripper(start=1.0)                 # stops at -31 / +3
     sim.enable()
     fb0 = sim.read()
-    fb = run(sim, MitCommand(vel=5.0, kd=1.0), 200)      # 200 * 20 ms = 4 s at ~5 rad/s
-    assert sim.true_position > 12.5                       # crossed the window edge
+    fb = run(sim, MitCommand(vel=-5.0, kd=1.0), 250)      # 250 * 20 ms = 5 s at ~5 rad/s
+    assert sim.true_position < -12.5                      # crossed the window edge
     assert -12.5 <= fb.position <= 12.5                   # feedback stays wrapped
     assert fb.position == pytest.approx(((sim.true_position + 12.5) % SPAN) - 12.5, abs=1e-6)
-    assert fb0.position == pytest.approx(12.0)
+    assert fb0.position == pytest.approx(1.0)
 
 
 def test_hard_stop_stalls_the_shaft():
@@ -776,8 +766,9 @@ def test_hard_stop_stalls_the_shaft():
 def test_torque_is_kd_times_velocity_error():
     sim = SimulatedWormGripper(start=0.0, friction=0.0)
     sim.enable()
-    fb = sim.command(MitCommand(vel=2.0, kd=0.5))
-    assert fb.torque == pytest.approx(0.5 * (2.0 - fb.velocity), abs=1e-6)
+    for _ in range(5):                                     # any step, any state
+        fb = sim.command(MitCommand(vel=2.0, kd=0.5))
+        assert fb.torque == pytest.approx(0.5 * (2.0 - fb.velocity), abs=1e-9)
 
 
 def test_drop_and_fault_injection():
@@ -823,13 +814,13 @@ class SimulatedWormGripper:
     pos_window = POS_WINDOW
 
     def __init__(self, stop_open: float = -31.0, stop_closed: float = +3.0, start: float = +1.0,
-                 friction: float = 0.25, tau_response: float = 0.05, dt: float = 0.02,
+                 friction: float = 0.25, dt: float = 0.02,
                  stop_stiffness: float = 2.0, inertia: float = 0.01):
         assert stop_open < start < stop_closed
         self.stop_open, self.stop_closed = stop_open, stop_closed
         self.true_position = start
         self.velocity = 0.0
-        self.friction, self.tau_response, self.dt = friction, tau_response, dt
+        self.friction, self.dt = friction, dt
         self.stop_stiffness, self.inertia = stop_stiffness, inertia
         self._enabled = False
         self._fault = 0
@@ -868,27 +859,28 @@ class SimulatedWormGripper:
             self._drops -= 1
             raise PortError("simulated dropped frame")
         if self._enabled and not self._fault:
-            tau = cmd.kd * (cmd.vel - self.velocity) + cmd.tau \
-                + cmd.kp * (cmd.pos - self._wrapped())
-            # friction opposes motion; stops push back
-            tau_net = tau - self.friction * (1 if self.velocity > 0 else -1 if self.velocity < 0 else 0)
+            # ONE velocity integrator, driven by the PREVIOUS step's torque, so the
+            # feedback pair (velocity, torque) is self-consistent: reported torque
+            # is kd*(v_cmd - reported_velocity) exactly, and the controller clamps
+            # its next v_cmd against that same reported velocity -- which is what
+            # makes the max_abs_torque <= TMAX assertion a real guarantee.
+            tau_net = self._torque \
+                - self.friction * (1 if self.velocity > 0 else -1 if self.velocity < 0 else 0)
             if self.true_position > self.stop_closed:
                 tau_net -= self.stop_stiffness * (self.true_position - self.stop_closed)
             elif self.true_position < self.stop_open:
                 tau_net -= self.stop_stiffness * (self.true_position - self.stop_open)
             self.velocity += (tau_net / self.inertia) * self.dt
-            # first-order lag toward the commanded velocity dominates (motor's own loop)
-            alpha = min(1.0, self.dt / max(self.tau_response, 1e-6))
-            self.velocity += alpha * (cmd.vel - self.velocity) if cmd.kd > 0 else 0.0
             new_pos = self.true_position + self.velocity * self.dt
-            # the shaft may compress the stop slightly but not pass it
-            new_pos = min(new_pos, self.stop_closed + 0.35)
-            new_pos = max(new_pos, self.stop_open - 0.35)
-            if new_pos in (self.stop_closed + 0.35, self.stop_open - 0.35):
+            hi, lo = self.stop_closed + 0.35, self.stop_open - 0.35
+            hit_stop = new_pos >= hi or new_pos <= lo
+            new_pos = min(hi, max(lo, new_pos))
+            if hit_stop:
                 self.velocity = 0.0
             self.true_position = new_pos
-            self._torque = tau
-            self.max_abs_torque = max(self.max_abs_torque, abs(tau))
+            self._torque = cmd.kd * (cmd.vel - self.velocity) + cmd.tau \
+                + cmd.kp * (cmd.pos - self._wrapped())
+            self.max_abs_torque = max(self.max_abs_torque, abs(self._torque))
         else:
             self.velocity = 0.0
             self._torque = 0.0
@@ -1547,11 +1539,10 @@ class FastGripper:
             raise HomingError("entry has no stop_closed datum -- run `autocal full` once")
         p = self.ctrl.profile
         d = p.close_dir
-        probe = GripperController({"open": -1e9, "closed": 1e9}, p)  # unclamped goals for probing
-        probe.tracker = MultiTurnTracker()
+        tracker = MultiTurnTracker()
         fb = self.port.read()
-        probe.tracker.update(fb.position)
-        start = probe.tracker.position
+        tracker.update(fb.position)
+        start = tracker.position
         t_end = time.monotonic() + 90.0
         contact_since = None
         kd = 1.0
@@ -1562,8 +1553,8 @@ class FastGripper:
             v = d * p.probe_vel
             v = min(fb.velocity + p.probe_tmax / kd, max(fb.velocity - p.probe_tmax / kd, v))
             fb = self.port.command(MitCommand(vel=v, kd=kd))
-            probe.tracker.update(fb.position)
-            if abs(probe.tracker.position - start) > 40.0:
+            tracker.update(fb.position)
+            if abs(tracker.position - start) > 40.0:
                 raise HomingError("traveled 40 rad without contact -- wrong close_dir or no stop")
             contact = abs(fb.torque) > p.contact_torque or abs(fb.velocity) < 0.1
             if contact:
@@ -1573,7 +1564,7 @@ class FastGripper:
             else:
                 contact_since = None
             time.sleep(0.02)
-        stop_here = probe.tracker.position
+        stop_here = tracker.position
         offset = self._entry["stop_closed"] - stop_here
         if abs(offset) > 3 * 6.283185 + 1.0:
             raise HomingError(f"re-anchor offset {offset:+.2f} rad exceeds ~3 turns -- probe "
@@ -1657,7 +1648,7 @@ class FastGripper:
 from .facade import FastGripper, HomingError
 from .profile import GripperProfile, PRESETS, TMAX_CAP
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.0.1"   # unchanged; the single bump to 0.1.0 happens in Task 12
 __all__ = ["FastGripper", "HomingError", "GripperProfile", "PRESETS", "TMAX_CAP", "__version__"]
 ```
 
@@ -1752,16 +1743,21 @@ Parser additions (in `main()`):
     for name in ("open", "close"):
         p = sub.add_parser(name, help=f"{name} fully (torque-capped)")
         p.add_argument("--gripper", default=None)
+        p.add_argument("--cal", default=None, help="cal store path override")
+    # every verb parser below also gets --cal; cmd_motion/cmd_home/cmd_status pass
+    # args.cal through as FastGripper.standalone(cal_path=args.cal)
     for name in ("goto", "drive"):
         p = sub.add_parser(name, help="go to a percentage open (0 = closed, 100 = open)")
         p.add_argument("pct", type=float)
         p.add_argument("--gripper", default=None)
     p = sub.add_parser("home", help="stall-home against the closed stop, then hold just off it")
     p.add_argument("--gripper", default=None)
-    p = sub.add_parser("status", help="print entry marks and the current wrapped position (no motion)")
+    p = sub.add_parser("status", help="print entry marks and current position (no motion; briefly energizes the motor with zero gains)")
     p.add_argument("--gripper", default=None)
 ```
 Dispatch: `open/close/goto/drive → cmd_motion`, `home → cmd_home`, `status → cmd_status`. Remove `drive` from the pass-through tool list and delete `tools/drive.py`'s direct-DM4310 body (keep the file as `from ..cli import main` shim or delete it and the old import).
+
+**Convention note (breaking vs v0.0.1):** `goto`/`drive` adopt spec §3.2 — **0 = closed, 100 = open**. The harvested `drive.py` had the opposite (`drive.py:56`, docstring "0=open"), which already contradicted `quickstart-linux.md:55-56`; this task makes code match docs and spec and deletes the old docstring with the body. Verify every doc mention of `drive`/`goto` agrees (grep `docs/` for `drive `).
 
 - [ ] **Step 4: Run** — `uv run pytest -q` all green (update `test_harvest.py`'s CLI-subcommand list to the new set).
 - [ ] **Step 5: Commit** — `git add -A && git commit -m "fastgripper-dm: open/close/goto/home/status verbs on the FastGripper facade"`
@@ -1807,7 +1803,7 @@ def test_preflight_profile_cap():
     if profile_tmax is not None and profile_tmax > TMAX_CAP:
         out.append(Finding("FAIL", f"profile: tmax_nm {profile_tmax} exceeds the {TMAX_CAP} Nm cap"))
 ```
-`run_preflight` passes `entry.get("motor_id")`, the id that answered, and `entry_profile(entry).tmax_nm`.
+`run_preflight` passes `entry.get("motor_id")`, the id that answered, and `entry_profile(entry).tmax_nm` — and its `watchdog_want` becomes `entry_profile(entry).watchdog_ms` when the entry carries a profile, else `cfg.get("watchdog_ms", 8000)` (change the current 500 fallback at `preflight.py:92`; 500 is known-bad).
 
 - [ ] **Step 4: Run** — full suite green. **Step 5: Commit.**
 
@@ -1825,11 +1821,15 @@ No code. A checklist executed on the Mac bench with gripper #2 (or #1), recorded
       Faults ⇒ unit is sub-ms (8000 ≈ 80 ms if 10 µs); no faults ⇒ try 500 again to reconfirm, then
       bisect (1000, 4000). Record the value/behaviour table in the bench note and set
       `GripperProfile.watchdog`'s comment to the measured unit. Restore 8000 afterwards.
+- [ ] **Park-drift measurement (sets `park_tolerance_rad`, required before Task 12):** with the
+      gripper parked, power-cycle the motor N ≥ 10 times; each cycle record |wrapped boot −
+      saved `last_wrapped`| (wrapped distance). Set `GripperProfile.park_tolerance_rad` above the
+      max observed (+50 % margin), update spec §10 with the measured table, drop the PROVISIONAL caveat.
 - [ ] `make dm-test && make gate` green; commit the bench note.
 
 ---
 
-### Task 12: Release `dm-v0.1.0` (TestPyPI → PyPI)
+### Task 12: Release `dm-v0.1.0` (TestPyPI → PyPI) — depends on Task 11's watchdog-unit AND park-drift measurements
 
 **Files:**
 - Create: `.github/workflows/release-dm.yml`
@@ -1849,7 +1849,7 @@ jobs:
     defaults: { run: { working-directory: packages/fastgripper-dm } }
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v4
       - run: uv build
       - uses: actions/upload-artifact@v4
         with: { name: dist, path: packages/fastgripper-dm/dist/ }
@@ -1877,7 +1877,7 @@ jobs:
 ```
 
 - [ ] **Step 2 (browser, human):** register pending publishers on test.pypi.org and pypi.org for project `fastgripper-dm`, owner `Transcend-Mechanics`, repo `fastgripper-software`, workflow `release-dm.yml`, environments `testpypi-dm` / `pypi-dm`; create both environments in GitHub repo settings (follow `fastgripper-lerobot/docs/RELEASING.md`).
-- [ ] **Step 3:** bump version to `0.1.0` in `pyproject.toml` + `__init__.py`; commit.
+- [ ] **Step 3:** bump version to `0.1.0` in `pyproject.toml` + `__init__.py` **and update `tests/test_harvest.py::test_version` to assert `"0.1.0"`** in the same commit.
 - [ ] **Step 4:** `workflow_dispatch` the dry run → verify install from TestPyPI in a scratch venv (`pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple fastgripper-dm`).
 - [ ] **Step 5:** `git tag dm-v0.1.0 && git push --tags` → verify `pip install fastgripper-dm` from PyPI; update README/quickstarts to drop the git-URL install.
 - [ ] **Step 6: Commit** any doc changes.
