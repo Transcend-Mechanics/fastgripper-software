@@ -90,3 +90,10 @@ def resolve_ids(args, entry: dict) -> tuple[int, int]:
     if cli_set or "motor_id" not in entry:
         return args.motor_id, args.master_id
     return int(entry["motor_id"]), int(entry["master_id"])
+
+
+def entry_profile(entry: dict):
+    """The entry's profile block merged over package defaults."""
+    from .profile import GripperProfile
+
+    return GripperProfile.from_dict(entry.get("profile", {}) or {})
