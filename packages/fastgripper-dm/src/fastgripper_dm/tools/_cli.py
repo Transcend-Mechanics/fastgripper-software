@@ -10,11 +10,19 @@ this fires -- finalization has nothing left to do, so skip it.
 import os
 import sys
 
+from ..port import PortError
+
 
 def run(main) -> None:
     code = 0
     try:
         main()
+    except PortError as e:
+        print(str(e), file=sys.stderr)
+        code = 1
+    except TimeoutError as e:
+        print(str(e), file=sys.stderr)
+        code = 1
     except SystemExit as e:
         if isinstance(e.code, str):
             print(e.code, file=sys.stderr)

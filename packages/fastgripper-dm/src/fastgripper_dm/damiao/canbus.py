@@ -9,10 +9,7 @@ import time
 
 import can
 
-
-class BusDead(SystemExit):
-    """The bus opened but passes no frames (nothing ACKs). Subclasses SystemExit so
-    the CLI wrapper prints the recovery text; library callers can catch it."""
+from ..port import BusDead
 
 
 def open_bus(interface: str = "auto", channel: str | None = None) -> can.BusABC:

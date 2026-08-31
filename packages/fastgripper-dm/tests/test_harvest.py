@@ -145,9 +145,36 @@ def test_preflight_bus_error_short_circuits():
     assert len(f) == 1 and f[0].level == "FAIL"
 
 
+def test_preflight_entry_motor_binding():
+    f = evaluate(True, 0, 8000, 8000, {"open": -20.0, "closed": 3.0, "last_position": 1.0,
+                                       "motor_id": 8}, entry_motor_id=8, answered_id=7)
+    assert any(x.level == "FAIL" and "entry" in x.text for x in f)
+
+
+def test_preflight_profile_cap():
+    f = evaluate(True, 0, 8000, 8000, {"open": -20.0, "closed": 3.0, "last_position": 1.0},
+                 profile_tmax=2.5)
+    assert any(x.level == "FAIL" and "tmax" in x.text for x in f)
+
+
+def test_watchdog_want_default_8000():
+    from fastgripper_dm.tools.preflight import watchdog_want_for
+    # no entry, no cfg → 8000
+    assert watchdog_want_for(None, {}) == 8000
+    # no entry, cfg set → cfg value
+    assert watchdog_want_for(None, {"watchdog_ms": 5000}) == 5000
+    # entry WITHOUT profile block, cfg set → cfg wins (catches precedence bug)
+    assert watchdog_want_for({"open": -20.0, "closed": 3.0}, {"watchdog_ms": 500}) == 500
+    # entry WITH profile block, cfg set → profile wins
+    assert watchdog_want_for({"open": -20.0, "closed": 3.0, "profile": {"watchdog_ms": 4000}},
+                             {"watchdog_ms": 500}) == 4000
+    # entry without profile, no cfg → 8000 default
+    assert watchdog_want_for({"open": -20.0, "closed": 3.0}, {}) == 8000
+
+
 # ---- CLI parses -----------------------------------------------------------
 
-@pytest.mark.parametrize("sub", ["setup", "preflight", "watchdog", "id", "doctor", "calibrate", "autocal", "drive", "cal-doctor"])
+@pytest.mark.parametrize("sub", ["setup", "preflight", "watchdog", "id", "doctor", "calibrate", "autocal", "cal-doctor", "open", "close", "goto", "drive", "home", "status"])
 def test_cli_help(sub):
     out = subprocess.run([sys.executable, "-m", "fastgripper_dm.cli", sub, "-h"], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr

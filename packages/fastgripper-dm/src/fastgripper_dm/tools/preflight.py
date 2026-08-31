@@ -11,9 +11,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from ..calstore import default_cal_path, load_store
-
-TMAX_CAP = 2.0
+from ..calstore import default_cal_path, entry_profile, load_store
+from ..profile import TMAX_CAP
 
 
 @dataclass
@@ -22,8 +21,17 @@ class Finding:
     text: str
 
 
+def watchdog_want_for(entry: dict | None, cfg: dict) -> int:
+    """Determine desired watchdog_ms: entry profile if present, else cfg, else 8000."""
+    if entry and entry.get("profile"):
+        profile = entry_profile(entry)
+        return profile.watchdog_ms
+    return cfg.get("watchdog_ms", 8000)
+
+
 def evaluate(echo: bool | None, status: int | None, watchdog: int | None, watchdog_want: int,
-             entry: dict | None, bus_error: str | None = None) -> list[Finding]:
+             entry: dict | None, bus_error: str | None = None, entry_motor_id: int | None = None,
+             answered_id: int | None = None, profile_tmax: float | None = None) -> list[Finding]:
     out: list[Finding] = []
     if bus_error:
         out.append(Finding("FAIL", f"bus: {bus_error}"))
@@ -36,6 +44,11 @@ def evaluate(echo: bool | None, status: int | None, watchdog: int | None, watchd
         out.append(Finding("FAIL", f"motor: latched fault {status:#x} -- power-cycle the motor supply, then rerun"))
     else:
         out.append(Finding("OK", f"motor answers ({'enabled' if status == 1 else 'disabled'})"))
+    if entry_motor_id is not None and answered_id is not None and entry_motor_id != answered_id:
+        out.append(Finding("FAIL", f"cal: entry is for motor 0x{entry_motor_id:02X} but "
+                           f"0x{answered_id:02X} answered -- wrong --gripper for this unit"))
+    if profile_tmax is not None and profile_tmax > TMAX_CAP:
+        out.append(Finding("FAIL", f"profile: tmax_nm {profile_tmax} exceeds the {TMAX_CAP} Nm cap"))
     if watchdog is None:
         out.append(Finding("FAIL", "watchdog: could not read RID 9"))
     elif watchdog == 0:
@@ -86,10 +99,10 @@ def collect(bus, motor_id: int, master_id: int):
 def run_preflight(cfg: dict, interface: str | None = None, channel: str | None = None) -> bool:
     from ..calstore import get_entry
     from ..damiao.canbus import open_bus
+    from ..port import PortError
 
     motor_id = int(cfg.get("motor_id", 0x01))
     master_id = int(cfg.get("master_id", 0x00))
-    want = int(cfg.get("watchdog_ms", 500))
     store = load_store(default_cal_path())
     entry = None
     if store["grippers"]:
@@ -97,14 +110,18 @@ def run_preflight(cfg: dict, interface: str | None = None, channel: str | None =
             _, entry = get_entry(store, cfg.get("gripper"))
         except SystemExit:
             entry = None
+    want = watchdog_want_for(entry, cfg)
     bus_error = None
     echo = status = watchdog = None
     try:
         with open_bus(interface or cfg.get("interface", "auto"), channel or cfg.get("channel")) as bus:
             echo, status, watchdog = collect(bus, motor_id, master_id)
-    except SystemExit as e:
+    except (PortError, SystemExit) as e:
         bus_error = str(e).splitlines()[0]
-    findings = evaluate(echo, status, watchdog, want, entry, bus_error)
+    findings = evaluate(echo, status, watchdog, want, entry, bus_error,
+                       entry_motor_id=entry.get("motor_id") if entry else None,
+                       answered_id=motor_id if status is not None else None,
+                       profile_tmax=entry_profile(entry).tmax_nm if entry else None)
     for f in findings:
         print(f"  [{f.level:4}] {f.text}")
     ok = not any(f.level == "FAIL" for f in findings)
