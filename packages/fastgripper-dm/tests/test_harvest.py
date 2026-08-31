@@ -147,7 +147,7 @@ def test_preflight_bus_error_short_circuits():
 
 # ---- CLI parses -----------------------------------------------------------
 
-@pytest.mark.parametrize("sub", ["setup", "preflight", "watchdog", "id", "doctor", "calibrate", "autocal", "drive", "cal-doctor"])
+@pytest.mark.parametrize("sub", ["setup", "preflight", "watchdog", "id", "doctor", "calibrate", "autocal", "cal-doctor", "open", "close", "goto", "drive", "home", "status"])
 def test_cli_help(sub):
     out = subprocess.run([sys.executable, "-m", "fastgripper_dm.cli", sub, "-h"], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
