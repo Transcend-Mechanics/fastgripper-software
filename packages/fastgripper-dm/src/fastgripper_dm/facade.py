@@ -63,31 +63,48 @@ class FastGripper:
             self.port = DamiaoCanPort(bus, int(self._entry.get("motor_id", cfg.get("motor_id", 0x01))),
                                       int(self._entry.get("master_id", cfg.get("master_id", 0x00))))
         self.port.enable()
-        boot = self.port.read()
-        mode = self._home_mode
-        if mode == "auto":
-            lw = self._entry.get("last_wrapped")
-            if lw is not None and _wrapped_dist(boot.position, lw) <= profile.park_tolerance_rad:
-                self.ctrl.adopt_park(self._entry["last_position"])
+        try:
+            boot = self.port.read()
+            mode = self._home_mode
+            if mode == "auto":
+                lw = self._entry.get("last_wrapped")
+                if lw is not None and _wrapped_dist(boot.position, lw) <= profile.park_tolerance_rad:
+                    self.ctrl.adopt_park(self._entry["last_position"])
+                    self.ctrl.tick(boot, 0.0)
+                elif self._auto_fallback == "stall":
+                    self.home_against_stop()
+                else:
+                    raise HomingError(
+                        f"gripper is not where it was parked (wrapped {boot.position:+.2f} vs "
+                        f"saved {lw}) -- run home_against_stop() / `autocal home`, or connect "
+                        f"with home='assume_closed' after closing the jaws by hand")
+            elif mode == "assume_closed":
                 self.ctrl.tick(boot, 0.0)
-            elif self._auto_fallback == "stall":
+                self.ctrl.anchor(self._entry["closed"])
+            elif mode == "stall":
                 self.home_against_stop()
+            elif mode == "off":
+                self.ctrl.tick(boot, 0.0)
             else:
-                raise HomingError(
-                    f"gripper is not where it was parked (wrapped {boot.position:+.2f} vs "
-                    f"saved {lw}) -- run home_against_stop() / `autocal home`, or connect "
-                    f"with home='assume_closed' after closing the jaws by hand")
-        elif mode == "assume_closed":
-            self.ctrl.tick(boot, 0.0)
-            self.ctrl.anchor(self._entry["closed"])
-        elif mode == "stall":
-            self.home_against_stop()
-        elif mode == "off":
-            self.ctrl.tick(boot, 0.0)
-        else:
-            raise ValueError(f"unknown home mode '{mode}'")
-        self.ctrl.hold()
+                raise ValueError(f"unknown home mode '{mode}'")
+            self.ctrl.hold()
+        except Exception:
+            # No failure path may leave the motor enabled (spec §4): once the
+            # port is enabled, any exception during boot/homing/restore must
+            # disable and close it before propagating.
+            self._safe_disable_close()
+            raise
         self._connected = True
+
+    def _safe_disable_close(self) -> None:
+        try:
+            self.port.disable()
+        except PortError:
+            pass
+        try:
+            self.port.close()
+        except PortError:
+            pass
 
     def home_against_stop(self) -> None:
         """Probe toward the closed stop under the profile's probe caps, anchor
@@ -192,6 +209,8 @@ class FastGripper:
             return
         self._connected = False
         try:
+            if self.ctrl:
+                self.ctrl.hold()
             self.park()
         finally:
             try:

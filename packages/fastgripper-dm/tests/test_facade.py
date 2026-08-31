@@ -65,3 +65,14 @@ def test_missing_marks_raise(tmp_path):
     sim, g = sim_gripper(tmp_path, {"stop_closed": 3.0}, start=1.0)
     with pytest.raises(ValueError):
         g.connect()
+
+
+def test_failed_connect_leaves_port_disabled(tmp_path):
+    # nonsense stop_closed datum -> home_against_stop raises HomingError after
+    # the port has already been enabled; the motor must not be left enabled.
+    entry = dict(ENTRY)
+    entry["stop_closed"] = 90.0
+    sim, g = sim_gripper(tmp_path, entry, start=-1.0)
+    with pytest.raises(HomingError):
+        g.connect()
+    assert sim.read().error_code == 0
