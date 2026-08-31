@@ -159,8 +159,16 @@ def test_preflight_profile_cap():
 
 def test_watchdog_want_default_8000():
     from fastgripper_dm.tools.preflight import watchdog_want_for
+    # no entry, no cfg → 8000
     assert watchdog_want_for(None, {}) == 8000
+    # no entry, cfg set → cfg value
     assert watchdog_want_for(None, {"watchdog_ms": 5000}) == 5000
+    # entry WITHOUT profile block, cfg set → cfg wins (catches precedence bug)
+    assert watchdog_want_for({"open": -20.0, "closed": 3.0}, {"watchdog_ms": 500}) == 500
+    # entry WITH profile block, cfg set → profile wins
+    assert watchdog_want_for({"open": -20.0, "closed": 3.0, "profile": {"watchdog_ms": 4000}},
+                             {"watchdog_ms": 500}) == 4000
+    # entry without profile, no cfg → 8000 default
     assert watchdog_want_for({"open": -20.0, "closed": 3.0}, {}) == 8000
 
 

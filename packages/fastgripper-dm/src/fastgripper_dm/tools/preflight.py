@@ -22,8 +22,8 @@ class Finding:
 
 
 def watchdog_want_for(entry: dict | None, cfg: dict) -> int:
-    """Determine desired watchdog_ms: profile's if present, else cfg, else 8000."""
-    if entry:
+    """Determine desired watchdog_ms: entry profile if present, else cfg, else 8000."""
+    if entry and entry.get("profile"):
         profile = entry_profile(entry)
         return profile.watchdog_ms
     return cfg.get("watchdog_ms", 8000)
