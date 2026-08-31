@@ -77,6 +77,12 @@ class GripperController:
         v = p.sw_kp * (self.goal - pos)
         v = min(p.vmax, max(-p.vmax, v))
         dv = p.tmax_nm / self.kd                    # = vmax by construction
+        # Clamps against fb.velocity, which is one integration step stale relative
+        # to the velocity the motor (or sim) uses to compute the torque it reports
+        # next tick -- the <= tmax bound is enforced by the motor's own kd law
+        # (tau = kd*(v_cmd - v_actual), a self-correcting relationship), not by
+        # strict per-tick algebra here, and is verified empirically in tests.
+        # Revisit this comment if vmax, sw_kp, or the loop dt change materially.
         v = min(fb.velocity + dv, max(fb.velocity - dv, v))
         # stall detection on MEASURED torque (current sense), like the bench code
         if abs(fb.torque) > p.stall_torque_frac * p.tmax_nm and not self.at_goal:
