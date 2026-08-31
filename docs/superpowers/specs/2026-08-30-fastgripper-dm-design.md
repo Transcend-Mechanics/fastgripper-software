@@ -333,7 +333,9 @@ someone pulls the power. Therefore:
 - `setup` writes RID 9 to `profile.watchdog_ms` and reads it back; a
   mismatch fails `setup`. `preflight` verifies it every run — NO-GO on
   mismatch or 0.
-- Default **500 ms** for the standalone 50 Hz loop (a 25-cycle stall). The
+- Default **8000** (raw RID 9 value; the arm motors' proven setting). 500 faulted
+  continuously at a 50 Hz stream on the bench (2026-08-30) — the register's unit
+  is NOT milliseconds and is pinned by the Task 11 experiment. The
   `yam` preset must confirm on the bench that 500 ms exceeds the worst-case
   inter-frame gap under i2rt retry storms on the shared 250 Hz chain
   (`I2RT_CAN_RESPONSE_TIMEOUT` up to 0.2 s × retries) or carry its own
@@ -454,7 +456,7 @@ of each drill is expected to fail; the issue list is the backlog.
 - Names: `fastgripper-dm` / `fastgripper_dm`; monorepo `fastgripper-software`.
 - No uv workspace; independent packages, independent lockfiles.
 - No `[i2rt]` extra on PyPI; manual git install documented.
-- Watchdog mandatory, 500 ms default, written by `setup`, verified by `preflight`.
+- Watchdog mandatory, RID 9 = 8000 default (unit under investigation; 500 proved wrong on the bench), written by `setup`, verified by `preflight`.
 - Park semantics: exact trust of `last_position`; rounding tracker retired.
 - Profiles replace module-level physical constants; `_cli.run` is the one exit path.
 - One gripper per bus/process in v0.
