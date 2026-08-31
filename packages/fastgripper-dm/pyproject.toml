@@ -1,6 +1,6 @@
 [project]
 name = "fastgripper-dm"
-version = "0.0.1"
+version = "0.1.0"
 description = "FastGripper worm-gear gripper driver for Damiao DM-J4310 actuators on a dedicated CAN channel"
 readme = "README.md"
 requires-python = ">=3.10"

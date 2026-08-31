@@ -1,0 +1,36 @@
+name: release-dm
+on:
+  push:
+    tags: ["dm-v*"]
+  workflow_dispatch: {}          # dry run -> TestPyPI
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: packages/fastgripper-dm } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with: { name: dist, path: packages/fastgripper-dm/dist/ }
+  testpypi:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi-dm
+    permissions: { id-token: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist/ }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with: { repository-url: "https://test.pypi.org/legacy/" }
+  pypi:
+    if: startsWith(github.ref, 'refs/tags/dm-v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi-dm
+    permissions: { id-token: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist/ }
+      - uses: pypa/gh-action-pypi-publish@release/v1
