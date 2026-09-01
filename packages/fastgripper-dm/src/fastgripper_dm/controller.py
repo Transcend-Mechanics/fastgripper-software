@@ -13,6 +13,8 @@ from .tracker import MultiTurnTracker
 
 
 class GripperController:
+    RELEASE_EPS = 0.05   # rad; matches the live teleop's trigger-backoff release
+
     def __init__(self, entry: dict, profile: GripperProfile):
         profile.validate()
         if "open" not in entry or "closed" not in entry:
@@ -26,10 +28,34 @@ class GripperController:
         self.goal: float | None = None
         self.stalled = False
         self._stall_t = 0.0
+        # Last *requested* goal (pre-stall-clamp), used only to detect a
+        # retreating goal while latched -- self.goal itself gets pinned to
+        # the current position on stall (see tick()), so it can't be used
+        # for that comparison once latched.
+        self._requested_goal: float | None = None
 
     # --- goals ---
     def goto_rad(self, pos: float) -> None:
-        self.goal = min(self._hi, max(self._lo, pos))
+        new_goal = min(self._hi, max(self._lo, pos))
+        if self.stalled:
+            # Latched on an obstruction: a goal that stays within RELEASE_EPS
+            # of the last requested goal is the trigger still held (or
+            # re-asserted every tick by the live per-tick goto) -- ignore it
+            # and keep the latch. Only a goal that has backed off by at
+            # least RELEASE_EPS (the live stall_clip semantics,
+            # so101_teleop.py:389-395) releases the latch.
+            prev = self._requested_goal if self._requested_goal is not None else new_goal
+            if abs(new_goal - prev) >= self.RELEASE_EPS:
+                self.stalled = False
+                self._stall_t = 0.0
+                self.goal = new_goal
+            self._requested_goal = new_goal
+            return
+        if self.goal is not None and abs(new_goal - self.goal) < 1e-9:
+            self._requested_goal = new_goal
+            return                            # idempotent re-goto: keep stall timer
+        self.goal = new_goal
+        self._requested_goal = new_goal
         self.stalled = False
         self._stall_t = 0.0
 

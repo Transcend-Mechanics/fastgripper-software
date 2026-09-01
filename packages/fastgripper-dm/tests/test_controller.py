@@ -80,3 +80,37 @@ def test_profile_validation_at_construction():
         GripperController(dict(ENTRY), GripperProfile(tmax_nm=9.0))
     with pytest.raises(ValueError):
         GripperController({}, GripperProfile())
+
+
+def test_per_tick_regoto_does_not_reset_stall():
+    sim = SimulatedWormGripper(stop_open=-31.0, stop_closed=-5.0, start=-10.0)
+    sim.enable()
+    c = GripperController(dict(ENTRY), GripperProfile())
+    c.adopt_park(-10.0)
+    fb = sim.read()
+    for _ in range(int(4.0 / 0.02)):
+        c.goto_frac(0.0)                      # trigger held: re-goto EVERY tick
+        fb = sim.command(c.tick(fb, 0.02))
+    assert c.stalled                          # latch must still engage
+    assert sim.max_abs_torque <= 2.0 + 1e-6
+
+
+def test_retreating_goal_releases_stall():
+    sim = SimulatedWormGripper(stop_open=-31.0, stop_closed=-5.0, start=-10.0)
+    sim.enable()
+    c = GripperController(dict(ENTRY), GripperProfile())
+    c.adopt_park(-10.0)
+    fb = sim.read()
+    for _ in range(int(4.0 / 0.02)):
+        c.goto_frac(0.0)
+        fb = sim.command(c.tick(fb, 0.02))
+    assert c.stalled
+    stall_pos = c.position
+    c.goto_frac(0.0)                          # same squeeze: stays latched
+    assert c.stalled
+    c.goto_frac(1.0)                          # trigger released: unlatch
+    assert not c.stalled
+    for _ in range(int(4.0 / 0.02)):
+        fb = sim.command(c.tick(fb, 0.02))
+    # ENTRY open=-30.0, closed=2.0; retreat (toward open) means position DECREASES
+    assert c.position < stall_pos - 0.5       # moved away from the stall
