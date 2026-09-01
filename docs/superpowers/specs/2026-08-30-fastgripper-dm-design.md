@@ -307,9 +307,8 @@ with g:                       # connect(home="auto") … disconnect() parks + di
 from fastgripper_dm.adapters.i2rt import I2rtGripper, to_i2rt_command
 robot = get_yam_robot(channel="0", gripper_limits_override=np.array([-POS_WINDOW, POS_WINDOW]))
 grip = I2rtGripper(robot, joint_index=6, gripper="yam")   # reads robot.get_joint_pos / get_observations only
-cmd = grip.tick(dt)                                        # real units
-vel[6], pos[6], kp[6], kd[6] = to_i2rt_command(cmd)        # vel / SPAN etc.
-robot.command_joint_state(pos=pos, vel=vel, kp=kp, kd=kd)  # the owner is the only writer
+pos[6], vel[6], kp[6], kd[6] = grip.command_tuple(dt)      # tick + to_i2rt_command(cmd, pos_norm): vel / SPAN etc.
+robot.command_joint_state({"pos": pos, "vel": vel, "kp": kp, "kd": kd})  # dict arg; the owner is the only writer
 ```
 
 ### 3.6 Motor watchdog — mandatory
