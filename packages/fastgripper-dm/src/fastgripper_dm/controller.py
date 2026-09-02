@@ -13,6 +13,8 @@ from .tracker import MultiTurnTracker
 
 
 class GripperController:
+    RELEASE_EPS = 0.05   # rad; matches the live teleop's trigger-backoff release
+
     def __init__(self, entry: dict, profile: GripperProfile):
         profile.validate()
         if "open" not in entry or "closed" not in entry:
@@ -26,12 +28,43 @@ class GripperController:
         self.goal: float | None = None
         self.stalled = False
         self._stall_t = 0.0
+        # The goal in effect when the latch engaged, and the sign of the
+        # travel that produced it (+1 = was closing, -1 = was opening).
+        # self.goal gets pinned to the current position on stall (see tick()),
+        # so the release test has to be against this frozen goal instead.
+        self._stall_goal: float | None = None
+        self._stall_dir = 0.0
 
     # --- goals ---
     def goto_rad(self, pos: float) -> None:
-        self.goal = min(self._hi, max(self._lo, pos))
-        self.stalled = False
-        self._stall_t = 0.0
+        new_goal = min(self._hi, max(self._lo, pos))
+        if self.stalled:
+            # Latched on an obstruction. Release ONLY when the new goal has
+            # retreated at least RELEASE_EPS from the goal that was in effect
+            # when the latch engaged, in the direction AWAY from the travel
+            # that produced the stall (the live stall_clip semantics,
+            # so101_teleop.py:389-395). Deliberately not abs(): a goal that
+            # pushes deeper into the obstruction, however far, keeps the latch.
+            # Measuring against the frozen _stall_goal (not the last goal) is
+            # what lets a slow, quantized trigger release accumulate.
+            retreat = (self._stall_goal - new_goal) * self._stall_dir
+            if retreat >= self.RELEASE_EPS:
+                self.stalled = False
+                self._stall_goal = None
+                self._stall_dir = 0.0
+                self._stall_t = 0.0
+                self.goal = new_goal
+            return
+        # Setting a goal never touches the stall timer. The timer measures
+        # sustained high MEASURED torque away from the goal, and tick() already
+        # zeroes it the moment the torque falls off -- which is exactly what
+        # happens when the operator really does back off an obstruction. Letting
+        # a goal edit re-zero it instead put the timer at the mercy of the
+        # trigger encoder: ~0.027 rad/tick of quantization plus dither means a
+        # merely-held trigger re-commands a slightly different goal every tick,
+        # the 0.4 s timer never expires, the latch never engages, and the motor
+        # pushes into a grasped object at the full 2.0 Nm cap indefinitely.
+        self.goal = new_goal
 
     def goto_frac(self, frac: float) -> None:
         frac = min(1.0, max(0.0, frac))
@@ -89,6 +122,8 @@ class GripperController:
             self._stall_t += dt
             if self._stall_t > p.stall_time_s:
                 self.stalled = True
+                self._stall_goal = self.goal
+                self._stall_dir = 1.0 if self.goal > pos else -1.0
                 self.goal = pos
                 return MitCommand(kd=self.kd)
         else:

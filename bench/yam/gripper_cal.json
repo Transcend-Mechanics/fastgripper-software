@@ -1,0 +1,79 @@
+{
+  "format": 2,
+  "grippers": {
+    "bench": {
+      "open": -26.92662317845426,
+      "closed": 10.7158197909514,
+      "last_position": -27.024681467917908,
+      "last_wrapped": -2.0246814679179064,
+      "span": 37.642442969405664,
+      "calibrated_at": "2026-07-11 16:21:06",
+      "stop_open": -27.67662317845426,
+      "stop_closed": 11.4658197909514,
+      "stop_span": 39.142442969405664,
+      "method": "autocal",
+      "motor_id": 32,
+      "master_id": 48
+    },
+    "hexapod_fr": {
+      "motor_id": 32,
+      "master_id": 48,
+      "close_dir": 1,
+      "open": -2.124990463111315,
+      "closed": 35.55903334096284,
+      "last_position": -2.2241931792172114,
+      "last_wrapped": -2.2241931792172114,
+      "span": 37.68402380407416,
+      "stop_open": -2.874990463111315,
+      "stop_closed": 36.30903334096284,
+      "stop_span": 39.18402380407416,
+      "method": "autocal",
+      "calibrated_at": "2026-07-12 00:06:32"
+    },
+    "hexapod_fl": {
+      "motor_id": 33,
+      "master_id": 49,
+      "close_dir": 1,
+      "open": -0.19510566872663482,
+      "closed": 35.401483939879455,
+      "span": 35.59658960860609,
+      "stop_open": -0.9451056687266348,
+      "stop_closed": 36.151483939879455,
+      "stop_span": 37.09658960860609,
+      "method": "autocal",
+      "calibrated_at": "2026-07-13 15:29:23",
+      "last_position": 23.371290150301363,
+      "last_wrapped": -1.6233691920347884
+    },
+    "yam": {
+      "open": -33.79816128786145,
+      "closed": 2.7616922255283445,
+      "last_position": -10.282482642862579,
+      "method": "keyboard",
+      "calibrated_at": "2026-08-27 17:24:07",
+      "last_wrapped": -4.006828412298772,
+      "motor_id": 7,
+      "master_id": 23,
+      "close_dir": 1,
+      "span": 33.5,
+      "stop_closed": 32.23754482337682,
+      "stop_open": -2.7624551766231775,
+      "stop_span": 35.0
+    },
+    "default": {
+      "motor_id": 1,
+      "master_id": 0,
+      "open": -23.717421988250553,
+      "closed": 10.782578011749447,
+      "last_position": 10.88216220340276,
+      "last_wrapped": 10.88216220340276,
+      "span": 34.5,
+      "method": "autocal_closed_only",
+      "calibrated_at": "2026-08-05 16:23:13",
+      "close_dir": 1,
+      "stop_closed": 11.532578011749447,
+      "stop_open": -24.467421988250553,
+      "stop_span": 36.0
+    }
+  }
+}

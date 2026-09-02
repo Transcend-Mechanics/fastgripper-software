@@ -1,0 +1,12 @@
+# Per-bench device paths for bench/tools/usb_stress.py.
+#
+# Copy this file to bench/local.toml (git-ignored) and fill in the real
+# serial device paths for the rig you're running on. Find them with:
+#   ls /dev/cu.usbmodem*
+#
+# Placeholders below are NOT real serial numbers -- replace every one.
+
+[ports]
+leader_1 = "/dev/cu.usbmodemXXXXXXXXXXX"
+leader_2 = "/dev/cu.usbmodemYYYYYYYYYYY"
+follower_2 = "/dev/cu.usbmodemZZZZZZZZZZZ"
