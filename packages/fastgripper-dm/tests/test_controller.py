@@ -114,3 +114,67 @@ def test_retreating_goal_releases_stall():
         fb = sim.command(c.tick(fb, 0.02))
     # ENTRY open=-30.0, closed=2.0; retreat (toward open) means position DECREASES
     assert c.position < stall_pos - 0.5       # moved away from the stall
+
+
+def stalled_on_object():
+    """A controller latched on an object at -5.0, closing toward +1.0."""
+    sim = SimulatedWormGripper(stop_open=-31.0, stop_closed=-5.0, start=-10.0)
+    sim.enable()
+    c = GripperController(dict(ENTRY), GripperProfile())
+    c.adopt_park(-10.0)
+    fb = sim.read()
+    for _ in range(int(4.0 / 0.02)):
+        c.goto_rad(1.0)
+        fb = sim.command(c.tick(fb, 0.02))
+    assert c.stalled
+    return sim, c, fb
+
+
+def test_stall_latches_despite_per_tick_goal_jitter():
+    # The live trigger quantizes to ~0.027 rad/tick and dithers; under the old
+    # contract every jittered goto reset the 0.4 s stall timer, so the latch
+    # never engaged and the motor kept pushing at the 2.0 Nm cap.
+    sim = SimulatedWormGripper(stop_open=-31.0, stop_closed=-5.0, start=-10.0)
+    sim.enable()
+    c = GripperController(dict(ENTRY), GripperProfile())
+    c.adopt_park(-10.0)
+    fb = sim.read()
+    for i in range(int(4.0 / 0.02)):
+        c.goto_rad(1.0 + (0.03 if i % 2 else -0.03))   # +/-0.03 rad jitter
+        fb = sim.command(c.tick(fb, 0.02))
+    assert c.stalled
+    assert sim.max_abs_torque <= 2.0 + 1e-6
+
+
+def test_deeper_goal_while_latched_stays_latched():
+    _, c, _ = stalled_on_object()
+    c.goto_rad(1.0 + 0.5)          # squeeze HARDER (toward the stall): no unlatch
+    assert c.stalled
+    c.goto_rad(2.0)                # all the way to the closed mark: still no unlatch
+    assert c.stalled
+
+
+def test_retreat_of_one_eps_unlatches():
+    _, c, _ = stalled_on_object()
+    c.goto_rad(1.0 - GripperController.RELEASE_EPS)
+    assert not c.stalled
+    assert c.goal == pytest.approx(0.95)
+
+
+def test_slow_staircase_retreat_eventually_unlatches():
+    # Trigger released one encoder tick (0.027 rad) at a time: each step alone
+    # is under RELEASE_EPS, but retreat is measured from the goal in effect at
+    # the latch, so the cumulative backoff releases it.
+    _, c, _ = stalled_on_object()
+    goal = 1.0
+    for _ in range(2):
+        goal -= 0.027
+        c.goto_rad(goal)
+    assert not c.stalled            # cumulative retreat 0.054 >= 0.05
+    assert c.goal == pytest.approx(goal)
+
+
+def test_one_staircase_step_is_not_enough():
+    _, c, _ = stalled_on_object()
+    c.goto_rad(1.0 - 0.027)
+    assert c.stalled

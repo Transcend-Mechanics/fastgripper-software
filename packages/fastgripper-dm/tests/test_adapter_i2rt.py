@@ -117,3 +117,27 @@ def test_lazy_import_message():
     # importing the module must not require i2rt; only robot-side helpers may
     import fastgripper_dm.adapters.i2rt as m
     assert hasattr(m, "I2rtGripper")
+
+
+def test_home_off_does_not_poison_the_cal_store(tmp_path, capsys):
+    # home="off" never anchors the multi-turn tracker, so park()'s
+    # last_position would be an arbitrary frame. Adopting it next session can
+    # drive the worm into a hard stop at the full torque cap -- so park() must
+    # refuse to save it.
+    path = entry_file(tmp_path, dict(ENTRY))
+    before = open(path).read()
+    robot = FakeYamRobot(grip_norm=(ENTRY["last_wrapped"] + POS_WINDOW) / SPAN)
+    g = I2rtGripper(robot, joint_index=6, gripper="yam", cal_path=path)
+    g.connect(home="off")
+    g.tick(0.02)
+    g.park()
+    assert open(path).read() == before          # cal store untouched
+    assert "not anchored" in capsys.readouterr().out
+
+
+def test_home_auto_still_persists_park(tmp_path):
+    robot, g = connected(tmp_path)              # home="auto" -> adopt_park
+    g.tick(0.02)
+    g.park()
+    saved = json.loads(open(g.cal_path).read())["grippers"]["yam"]
+    assert saved["last_position"] == pytest.approx(g.position)

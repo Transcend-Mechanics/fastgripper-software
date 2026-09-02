@@ -43,6 +43,11 @@ class I2rtGripper:
         self.ctrl = GripperController(self.entry, entry_profile(self.entry))
         self.last_feedback: Feedback | None = None
         self._connected = False
+        # True once this session has put the multi-turn tracker into the same
+        # frame the cal store uses (park adoption, or explicit homing). Until
+        # then the tracker's zero is wherever the shaft happened to boot, and
+        # nothing derived from it may be written back to the store.
+        self._anchored = False
 
     # --- read side ---
     def _wrapped(self) -> float:
@@ -80,8 +85,9 @@ class I2rtGripper:
                     f"run `fastgripper-dm autocal home --gripper {self._name}` on a dedicated "
                     f"channel, or fix the cal entry; no stall homing on a shared chain")
             self.ctrl.adopt_park(self.entry["last_position"])
+            self._anchored = True
         elif home == "off":
-            pass
+            pass                       # leaves the tracker unanchored
         else:
             raise ValueError(f"unsupported home mode on a shared chain: {home!r}")
         self.ctrl.tick(self._feedback(), 0.0)
@@ -122,7 +128,23 @@ class I2rtGripper:
     @property
     def stalled(self) -> bool: return self.ctrl.stalled
 
+    def anchor(self, known_position: float) -> None:
+        """Declare the shaft's true multi-turn position (explicit homing).
+
+        This is what makes a `home="off"` session's park() safe to save."""
+        self.ctrl.anchor(known_position)
+        self._anchored = True
+
     def park(self) -> None:
+        self.ctrl.hold()               # stop moving, anchored or not
+        if not self._anchored:
+            # home="off": the tracker is not anchored, so last_position would be
+            # an arbitrary frame. Saving it lets the NEXT session adopt it and
+            # drive the (non-back-drivable) worm into a hard stop at the full
+            # torque cap. Stop moving, save nothing.
+            print("park: tracker is not anchored (home=off) -- not saving "
+                  "last_position; re-home before the next session")
+            return
         if self.ctrl.tracker.seen:
             self.entry.update(self.ctrl.park_fields())
             self.entry["parked_at"] = time.strftime("%Y-%m-%d %H:%M:%S")

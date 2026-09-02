@@ -28,36 +28,43 @@ class GripperController:
         self.goal: float | None = None
         self.stalled = False
         self._stall_t = 0.0
-        # Last *requested* goal (pre-stall-clamp), used only to detect a
-        # retreating goal while latched -- self.goal itself gets pinned to
-        # the current position on stall (see tick()), so it can't be used
-        # for that comparison once latched.
-        self._requested_goal: float | None = None
+        # The goal in effect when the latch engaged, and the sign of the
+        # travel that produced it (+1 = was closing, -1 = was opening).
+        # self.goal gets pinned to the current position on stall (see tick()),
+        # so the release test has to be against this frozen goal instead.
+        self._stall_goal: float | None = None
+        self._stall_dir = 0.0
 
     # --- goals ---
     def goto_rad(self, pos: float) -> None:
         new_goal = min(self._hi, max(self._lo, pos))
         if self.stalled:
-            # Latched on an obstruction: a goal that stays within RELEASE_EPS
-            # of the last requested goal is the trigger still held (or
-            # re-asserted every tick by the live per-tick goto) -- ignore it
-            # and keep the latch. Only a goal that has backed off by at
-            # least RELEASE_EPS (the live stall_clip semantics,
-            # so101_teleop.py:389-395) releases the latch.
-            prev = self._requested_goal if self._requested_goal is not None else new_goal
-            if abs(new_goal - prev) >= self.RELEASE_EPS:
+            # Latched on an obstruction. Release ONLY when the new goal has
+            # retreated at least RELEASE_EPS from the goal that was in effect
+            # when the latch engaged, in the direction AWAY from the travel
+            # that produced the stall (the live stall_clip semantics,
+            # so101_teleop.py:389-395). Deliberately not abs(): a goal that
+            # pushes deeper into the obstruction, however far, keeps the latch.
+            # Measuring against the frozen _stall_goal (not the last goal) is
+            # what lets a slow, quantized trigger release accumulate.
+            retreat = (self._stall_goal - new_goal) * self._stall_dir
+            if retreat >= self.RELEASE_EPS:
                 self.stalled = False
+                self._stall_goal = None
+                self._stall_dir = 0.0
                 self._stall_t = 0.0
                 self.goal = new_goal
-            self._requested_goal = new_goal
             return
-        if self.goal is not None and abs(new_goal - self.goal) < 1e-9:
-            self._requested_goal = new_goal
-            return                            # idempotent re-goto: keep stall timer
+        # Setting a goal never touches the stall timer. The timer measures
+        # sustained high MEASURED torque away from the goal, and tick() already
+        # zeroes it the moment the torque falls off -- which is exactly what
+        # happens when the operator really does back off an obstruction. Letting
+        # a goal edit re-zero it instead put the timer at the mercy of the
+        # trigger encoder: ~0.027 rad/tick of quantization plus dither means a
+        # merely-held trigger re-commands a slightly different goal every tick,
+        # the 0.4 s timer never expires, the latch never engages, and the motor
+        # pushes into a grasped object at the full 2.0 Nm cap indefinitely.
         self.goal = new_goal
-        self._requested_goal = new_goal
-        self.stalled = False
-        self._stall_t = 0.0
 
     def goto_frac(self, frac: float) -> None:
         frac = min(1.0, max(0.0, frac))
@@ -115,6 +122,8 @@ class GripperController:
             self._stall_t += dt
             if self._stall_t > p.stall_time_s:
                 self.stalled = True
+                self._stall_goal = self.goal
+                self._stall_dir = 1.0 if self.goal > pos else -1.0
                 self.goal = pos
                 return MitCommand(kd=self.kd)
         else:

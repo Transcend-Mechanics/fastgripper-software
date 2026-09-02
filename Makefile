@@ -4,4 +4,4 @@ dm-sync:
 dm-test: dm-sync
 	cd packages/fastgripper-dm && uv run pytest -q
 gate:
-	@! grep -rnE 'usbmodem[0-9]{7,}' packages bench 2>/dev/null || (echo "serial numbers / bench device paths found" && exit 1)
+	@! grep -rnE 'usbmodem[0-9]{7,}' packages bench docs 2>/dev/null || (echo "serial numbers / bench device paths found" && exit 1)

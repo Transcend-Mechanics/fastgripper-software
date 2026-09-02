@@ -5,7 +5,7 @@ Runs so101_teleop.py as a subprocess (the GUI never touches the CAN bus) and
 renders its 10Hz telemetry stream. Run from a terminal (see bench/README.md
 for the venv setup):
 
-  cd bench/yam && ../../packages/fastgripper-dm/.venv/bin/python teleop_gui.py
+  cd bench/yam && ../.venv/bin/python teleop_gui.py
 """
 
 import os
@@ -17,7 +17,8 @@ import threading
 import tkinter as tk
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PYTHON = os.path.join(HERE, "..", "..", "packages", "fastgripper-dm", ".venv", "bin", "python")
+# bench/.venv is the one the runbooks build: it has i2rt + the gs_usb patches.
+PYTHON = os.path.join(HERE, "..", ".venv", "bin", "python")
 TELEOP = os.path.join(HERE, "so101_teleop.py")
 CAL_FILE = os.path.join(HERE, "gripper_cal.json")
 LEADER_PORT = "/dev/cu.usbmodemXXXXXXXXXXX"  # bench-specific; see bench/local.toml
