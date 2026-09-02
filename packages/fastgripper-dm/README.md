@@ -19,7 +19,9 @@ fastgripper-dm autocal home         # re-anchor against the closed stop (~20 s)
 fastgripper-dm drive 40             # 40 % and exit
 ```
 
-Docs: `docs/fastgripper-dm/` at the repo root (quickstart-linux, quickstart-mac, troubleshooting).
+Docs: `docs/fastgripper-dm/` at the repo root (quickstart-linux, quickstart-mac,
+troubleshooting). Driving the gripper on an i2rt YAM arm instead of a
+dedicated CAN channel? See `docs/fastgripper-dm/yam.md`.
 
 Safety: the `setup` step writes a comm-loss watchdog into the motor so a
 crashed host cannot leave the worm pushing into a stop. `preflight` refuses to

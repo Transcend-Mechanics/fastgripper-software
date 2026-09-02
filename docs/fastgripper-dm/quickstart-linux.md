@@ -58,3 +58,6 @@ fastgripper-dm autocal home # re-anchor after any unclean exit (~20 s)
 ```
 
 Stuck? `fastgripper-dm doctor` then `docs/fastgripper-dm/troubleshooting.md`.
+
+Driving the gripper as part of an i2rt YAM arm instead of on its own CAN
+channel? See `docs/fastgripper-dm/yam.md`.
