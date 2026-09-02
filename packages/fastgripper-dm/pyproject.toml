@@ -8,7 +8,7 @@ license = { text = "Apache-2.0" }
 dependencies = ["python-can>=4.0,<4.6", "pyusb>=1.2", "gs_usb>=0.3.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "numpy>=1.24"]
 
 [project.scripts]
 fastgripper-dm = "fastgripper_dm.cli:main"
