@@ -54,13 +54,13 @@ below.
 
 ```bash
 $PY -u bench/tools/wiggle_joints.py --channel $CAN        # YAM: each joint ±0.1 rad, 4 s each
+$PY bench/so101/so101_monitor.py --leader_port $LEADER --seconds 60   # leader: which servo moves
 ```
 
 `wiggle_joints.py` proves the follower moves and confirms which index is
-which joint. (The SO-101-leader-side equivalent, `so101_monitor.py`, is not
-part of this bench migration; if you need to re-derive `JOINT_MAP`, wiggle
-one leader joint at a time and watch which delta grows using
-`bench/so101/trigger_probe.py` as a template.)
+which joint; `so101_monitor.py` is the leader-side equivalent (move ONE
+joint at a time and watch which delta grows) — that's how `JOINT_MAP` was
+verified.
 
 ## Teleop GUI (recommended)
 
@@ -136,9 +136,8 @@ fastgripper-dm calibrate --gripper yam   # keyboard jog + mark ends
 ## One-time calibrations (redo only if hardware changes)
 
 ```bash
-# trigger endpoints (absolute gripper mapping) -- not yet migrated into
-# bench/; run the standalone so101_trigger_cal.py against $LEADER and copy
-# its output over bench/yam/so101_trigger_cal.json.
+# trigger endpoints (absolute gripper mapping)
+$PY bench/so101/so101_trigger_cal.py --leader_port $LEADER
 
 # assign a factory DM4310 the gripper identity 0x07/0x17
 # (motor must be ALONE on the bus: harness straight into the motor)
