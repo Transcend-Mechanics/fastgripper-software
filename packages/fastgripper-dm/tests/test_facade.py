@@ -233,17 +233,14 @@ def test_rehome_accepts_a_whole_span_alias(tmp_path):
     assert port.true == pytest.approx(g.position, abs=0.05)
 
 
-@pytest.mark.xfail(reason="after folding, |offset| <= SPAN/2 = 12.5 can never exceed the "
-                          "3-turn (19.85 rad) friction threshold, so the guard is "
-                          "unreachable; flagged in the 0.1.1 report", strict=True)
 def test_rehome_still_rejects_a_probe_that_stopped_on_friction(tmp_path):
     # Probe stalls 5 rad short of the datum (friction, not the stop). 5 rad is
-    # inside one window and well past the 0.75 rad margin, so it should be rejected.
+    # inside one window, so only the folded-offset guard can catch it.
     entry = dict(ENTRY, profile={"probe_vel": 20.0})
     port = AliasPort(start=-8.0, stop_true=-2.0)   # real stop 5 rad short of 3.0
     g = FastGripper(port=port, cal_path=make_store(tmp_path, entry),
                     gripper="default", home="stall")
-    with pytest.raises(HomingError):
+    with pytest.raises(HomingError, match="probably friction"):
         g.connect()
 
 

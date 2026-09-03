@@ -152,7 +152,11 @@ class FastGripper:
 
     def home_against_stop(self) -> None:
         """Probe toward the closed stop under the profile's probe caps, anchor
-        against the recorded stop_closed datum, with the URtest sanity guards."""
+        against the recorded stop_closed datum, with the URtest sanity guards.
+
+        The probe's own tracker starts from the raw wrapped boot position, so the
+        re-anchor offset is only known modulo SPAN; it is folded into the nearest
+        +/-SPAN/2 window before being checked against park_tolerance_rad."""
         if "stop_closed" not in self._entry:
             raise HomingError("entry has no stop_closed datum -- run `autocal full` once")
         p = self.ctrl.profile
@@ -196,12 +200,21 @@ class FastGripper:
         offset = self._entry["stop_closed"] - stop_here
         # The probe tracker starts from the RAW wrapped boot position, so the true
         # offset is only known modulo one +/-12.5 rad window. Fold it BEFORE the
-        # friction sanity check -- unfolded, a legitimate re-home at the stop read
-        # as a +/-25 rad offset and every re-home aborted (2026-09-02).
+        # sanity check -- unfolded, a legitimate re-home at the stop read as a
+        # +/-25 rad offset and every re-home aborted (2026-09-02).
         offset = _fold(offset)
-        if abs(offset) > 3 * 6.283185 + 1.0:
-            raise HomingError(f"re-anchor offset {offset:+.2f} rad exceeds ~3 turns -- probe "
-                              f"likely triggered on friction; raise contact_torque and retry")
+        # Friction guard, on the FOLDED offset. A probe that really reached the
+        # stop lands on the datum: 2026-09-02 hardware runs measured 0.04-0.29 rad,
+        # and park_tolerance_rad (3.0) also covers the ~1 rad of stop compliance
+        # seen under a 2 Nm push. A probe that tripped on friction instead stops
+        # anywhere in the window, so anything past that tolerance is not the stop.
+        # (The old ~3-turn threshold is meaningless here: folding bounds |offset|
+        # by SPAN/2 = 12.5 rad, so it could never fire.)
+        if abs(offset) > p.park_tolerance_rad:
+            raise HomingError(
+                f"probe stopped {offset:+.2f} rad from the closed-stop datum "
+                f"(tolerance {p.park_tolerance_rad}) -- probably friction, not the "
+                f"stop; raise contact_torque or recalibrate")
         anchored = self._entry["stop_closed"]     # the stop IS the datum
         lo = min(self._entry["open"], self._entry["closed"]) - 2.0
         hi = max(self._entry["open"], self._entry["closed"]) + 2.0
