@@ -47,11 +47,13 @@ def test_auto_stall_homes_on_mismatch(tmp_path):
     assert sim.true_position == pytest.approx(2.0, abs=0.5)
 
 
-def test_homing_guard_rejects_absurd_reanchor(tmp_path):
+def test_homing_guard_rejects_a_datum_the_probe_cannot_reach(tmp_path):
+    # Nonsense datum: the probe stops 11.65 rad (folded) from where stop_closed
+    # claims the stop is, well past park_tolerance_rad -> the friction guard fires.
     entry = dict(ENTRY)
-    entry["stop_closed"] = 90.0                   # nonsense datum -> outside the cal range
+    entry["stop_closed"] = 90.0
     sim, g = sim_gripper(tmp_path, entry, start=-5.0)
-    with pytest.raises(HomingError):
+    with pytest.raises(HomingError, match="probably friction"):
         g.connect()
 
 
@@ -98,18 +100,24 @@ class FakePort:
 
     pos_window = POS_WINDOW
 
-    def __init__(self, wrapped=0.0, fail_read=False):
+    def __init__(self, wrapped=0.0, fail_read=False, fail_enable=False, fail_disable=False):
         self.wrapped = wrapped
         self.fail_read = fail_read
+        self.fail_enable = fail_enable
+        self.fail_disable = fail_disable
         self.enabled = False
         self.closed = False
         self.motor = SimpleNamespace(bus=MagicMock())
 
     def enable(self):
+        if self.fail_enable:
+            raise PortError("simulated enable failure")
         self.enabled = True
 
     def disable(self):
         self.enabled = False
+        if self.fail_disable:
+            raise PortError("simulated disable failure")
 
     def clear_error(self):
         pass
@@ -180,6 +188,36 @@ def test_failed_connect_shuts_the_bus_down_once(tmp_path):
         g.connect()
     assert not port.enabled                       # motor disabled on the failure path
     assert port.motor.bus.shutdown.call_count == 1
+
+
+def test_failed_enable_shuts_the_bus_down_once(tmp_path):
+    # enable() sits inside connect()'s teardown guard: a CanError there must not
+    # escape with the bus left to be collected at interpreter exit.
+    port = FakePort(wrapped=1.0, fail_enable=True)
+    g = FastGripper(port=port, cal_path=make_store(tmp_path, dict(ENTRY)), gripper="default")
+    with pytest.raises(PortError, match="enable"):
+        g.connect()
+    assert port.closed
+    assert port.motor.bus.shutdown.call_count == 1
+
+
+def test_teardown_shuts_the_bus_down_even_when_disable_raises(tmp_path):
+    port = FakePort(wrapped=1.0, fail_read=True, fail_disable=True)
+    g = FastGripper(port=port, cal_path=make_store(tmp_path, dict(ENTRY)), gripper="default")
+    with pytest.raises(PortError):
+        g.connect()
+    assert port.closed                            # close() still ran
+    assert port.motor.bus.shutdown.call_count == 1
+
+
+def test_teardown_shuts_down_a_bus_opened_before_the_port_existed(tmp_path):
+    # open_bus() succeeded but the port construction failed: self.port is still
+    # None, and the only handle on the bus is the one connect() stashed.
+    g = FastGripper(cal_path=make_store(tmp_path, dict(ENTRY)), gripper="default")
+    bus = MagicMock()
+    g._own_bus = bus
+    g._safe_disable_close()                       # must not raise on port=None
+    assert bus.shutdown.call_count == 1
 
 
 def test_shutdown_bus_tolerates_a_port_without_one(tmp_path):

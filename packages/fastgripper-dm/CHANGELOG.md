@@ -35,6 +35,19 @@ gs_usb on macOS) after 0.1.0 shipped. No API, CLI or convention changes.
   probe caps. At `probe_tmax` 1.0 the acceleration clamp permits more torque than
   `contact_torque` (0.8), so on a very low-inertia system a long acceleration ramp
   could read as contact; the 0.3 s debounce covers it in practice.
+- **Teardown hardened.** The port construction and `enable()` now run inside
+  `connect()`'s teardown guard, so a bus error there cannot escape with the bus
+  left to die in GC; a bus opened before the port existed is shut down too. The
+  `status` verb's teardown moved into a `finally` and goes through
+  `_safe_disable_close()`, so a failure part-way through still closes the port and
+  shuts the bus down (and still saves no park).
+- **`autocal` probe defaults now come from `GripperProfile()`** instead of its own
+  copies, which had drifted to the pre-0.1.1 values and false-contacted on friction
+  on this unit. All flags stay overridable.
+- **Upgrade note:** a hand-edited `profile` block in the cal store that sets only
+  `probe_tmax` below 0.8 now fails `validate()` at `connect()` with a message naming
+  both values, because the new `contact_torque` default (0.8) would be at or above
+  it. Set `contact_torque` in the same block.
 - **Park guard on the facade.** `FastGripper` tracks whether the session anchored
   the tracker; `park()` warns and saves nothing when it did not (`home="off"`).
   Mirrors the guard already in `adapters/i2rt.py`.

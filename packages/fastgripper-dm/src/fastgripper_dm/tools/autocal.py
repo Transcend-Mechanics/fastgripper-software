@@ -35,6 +35,7 @@ import time
 from ..calstore import default_cal_path, get_entry, load_store, resolve_ids, save_store
 from ..damiao.canbus import add_bus_args, open_bus
 from ..damiao.dm4310 import DM4310, MultiTurnTracker
+from ..profile import GripperProfile
 
 # Usable travel assumed below the closed mark when probing closed-only.
 # Conservative UNDERestimate of real stop-to-stop travel: if this is too
@@ -188,33 +189,39 @@ def main() -> None:
     parser.add_argument("--gripper", default=None,
                         help="cal entry name (optional if the file has exactly one; "
                              "full mode creates the entry if it doesn't exist)")
-    parser.add_argument("--close_dir", type=int, choices=[1, -1], default=1,
+    # One source of truth for the values GripperProfile also carries: the probe
+    # caps were re-measured on 2026-09-02 (fastgripper-dm 0.1.1) and drifted apart
+    # from these defaults, which then false-contacted on friction. Still overridable.
+    _d = GripperProfile()
+    parser.add_argument("--close_dir", type=int, choices=[1, -1], default=_d.close_dir,
                         help="motor velocity sign that closes the jaws (default +1)")
-    parser.add_argument("--probe_vel", type=float, default=0.8,
+    parser.add_argument("--probe_vel", type=float, default=_d.probe_vel,
                         help="slow datum-touch speed, rad/s")
-    parser.add_argument("--seek_vel", type=float, default=2.5,
+    parser.add_argument("--seek_vel", type=float, default=_d.seek_vel,
                         help="fast seek speed for the first touch and traverses, rad/s "
                              "(set equal to --probe_vel for all-slow behavior)")
     parser.add_argument("--seek_torque_pad", type=float, default=0.05,
                         help="Nm added to --contact_torque during the fast seek only "
                              "(friction torque rises with speed; bench 2026-07-11: "
                              "fast free-run mid-0.2s, max 0.28 -> seek trigger 0.35)")
-    parser.add_argument("--probe_tmax", type=float, default=0.5,
-                        help="probe torque cap, Nm at the motor (worm multiplies!)")
+    parser.add_argument("--probe_tmax", type=float, default=_d.probe_tmax,
+                        help="probe torque cap, Nm at the motor (worm multiplies!); "
+                             "must stay above --contact_torque or the probe can never "
+                             "reach its own trigger")
     parser.add_argument("--kd", type=float, default=1.0)
     parser.add_argument("--stall_speed", type=float, default=0.1, help="rad/s")
     parser.add_argument("--stall_time", type=float, default=0.3, help="s")
-    parser.add_argument("--contact_torque", type=float, default=0.30,
+    parser.add_argument("--contact_torque", type=float, default=_d.contact_torque,
                         help="Nm: trigger on sustained torque above this (bench-tuned "
-                             "2026-07-11: free-run 0.17-0.23, tip contact ~0.30, "
-                             "hard press 0.38-0.42). Pass 0 to disable and use "
-                             "velocity-stall only.")
+                             "2026-09-02: free-run p95 0.36-0.44 on this unit, so the "
+                             "old 0.30 default triggered on friction at the start "
+                             "position). Pass 0 to disable and use velocity-stall only.")
     parser.add_argument("--contact_time", type=float, default=0.12,
                         help="s of sustained over-threshold torque to confirm contact")
-    parser.add_argument("--backoff", type=float, default=2.0, help="rad between touches")
-    parser.add_argument("--touch_tol", type=float, default=0.2,
+    parser.add_argument("--backoff", type=float, default=_d.backoff, help="rad between touches")
+    parser.add_argument("--touch_tol", type=float, default=_d.touch_tol,
                         help="max disagreement between double-touches, rad")
-    parser.add_argument("--margin", type=float, default=0.75,
+    parser.add_argument("--margin", type=float, default=_d.margin,
                         help="marks sit this far inside the physical stops, rad")
     parser.add_argument("--expected_span", type=float, default=None,
                         help="stop-to-stop distance from CAD/previous cal, rad (full mode)")

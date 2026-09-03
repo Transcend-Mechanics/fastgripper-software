@@ -41,6 +41,9 @@ class FastGripper:
         self._store = None
         self._entry = None
         self._connected = False
+        # A bus this object opened itself, kept so teardown can still shut it down
+        # if the port construction fails between open_bus() and self.port being set.
+        self._own_bus = None
         # True once this session has put the multi-turn tracker into the same
         # frame the cal store uses (park adoption, assume_closed, or homing).
         # Until then the tracker's zero is wherever the shaft happened to boot,
@@ -65,18 +68,22 @@ class FastGripper:
         self._gripper_name = name
         profile = entry_profile(self._entry)
         self.ctrl = GripperController(self._entry, profile)
-        if self.port is None:
-            from .cli import _load_config
-            from .damiao.canbus import open_bus
-
-            cfg = _load_config()
-            bus = open_bus(self._interface, self._channel)
-            from .damiao.can_port import DamiaoCanPort
-
-            self.port = DamiaoCanPort(bus, int(self._entry.get("motor_id", cfg.get("motor_id", 0x01))),
-                                      int(self._entry.get("master_id", cfg.get("master_id", 0x00))))
-        self.port.enable()
+        # Everything from open_bus() onward runs under the teardown guard below:
+        # a failure in the port construction or in enable() must not leave the bus
+        # to be collected at interpreter exit (see _shutdown_bus).
         try:
+            if self.port is None:
+                from .cli import _load_config
+                from .damiao.canbus import open_bus
+
+                cfg = _load_config()
+                bus = open_bus(self._interface, self._channel)
+                self._own_bus = bus
+                from .damiao.can_port import DamiaoCanPort
+
+                self.port = DamiaoCanPort(bus, int(self._entry.get("motor_id", cfg.get("motor_id", 0x01))),
+                                          int(self._entry.get("master_id", cfg.get("master_id", 0x00))))
+            self.port.enable()
             boot = self.port.read()
             mode = self._home_mode
             if mode == "auto":
@@ -133,6 +140,8 @@ class FastGripper:
         turn a teardown into an exception."""
         bus = getattr(getattr(self.port, "motor", None), "bus", None)
         if bus is None:
+            bus = self._own_bus
+        if bus is None:
             return
         try:
             bus.shutdown()
@@ -140,14 +149,19 @@ class FastGripper:
             pass
 
     def _safe_disable_close(self) -> None:
-        try:
-            self.port.disable()
-        except Exception:
-            pass
-        try:
-            self.port.close()
-        except Exception:
-            pass
+        """Disable, close and shut the bus down, swallowing every failure.
+
+        The port may be absent (a failure between open_bus and the port being
+        constructed), and each step must run even if an earlier one raised."""
+        if self.port is not None:
+            try:
+                self.port.disable()
+            except Exception:
+                pass
+            try:
+                self.port.close()
+            except Exception:
+                pass
         self._shutdown_bus()
 
     def home_against_stop(self) -> None:

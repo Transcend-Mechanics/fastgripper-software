@@ -162,18 +162,19 @@ def cmd_status(args, extra):
     def go():
         g = FastGripper.standalone(gripper=args.gripper, cal_path=args.cal, home="off")
         g.connect()
-        e = g._entry
-        pos = g.position
-        pct = 100.0 * (pos - e["closed"]) / (e["open"] - e["closed"]) if pos is not None and e["open"] != e["closed"] else None
-        print(f"entry '{g._gripper_name}': open {e['open']:+.2f} closed {e['closed']:+.2f} rad")
-        print(f"position (this window): {pos:+.2f} rad" + (f" ~ {pct:.0f}% open" if pct is not None else ""))
-        print("NOTE: 'off' mode has no absolute frame; use preflight/park for trusted state")
-        g.port.disable()
-        g.port.close()
-        # Shut the bus down as disconnect() would, but WITHOUT calling
-        # disconnect(): 'off' mode has no absolute frame, so its park must not
-        # be saved. See FastGripper._shutdown_bus for why this cannot be left to GC.
-        g._shutdown_bus()
+        try:
+            e = g._entry
+            pos = g.position
+            pct = 100.0 * (pos - e["closed"]) / (e["open"] - e["closed"]) if pos is not None and e["open"] != e["closed"] else None
+            print(f"entry '{g._gripper_name}': open {e['open']:+.2f} closed {e['closed']:+.2f} rad")
+            print(f"position (this window): {pos:+.2f} rad" + (f" ~ {pct:.0f}% open" if pct is not None else ""))
+            print("NOTE: 'off' mode has no absolute frame; use preflight/park for trusted state")
+        finally:
+            # Deliberately NOT disconnect(): 'off' mode has no absolute frame, so
+            # its park must not be saved. _safe_disable_close() saves nothing and
+            # runs every step -- disable, close, bus shutdown -- even if an earlier
+            # one raises, so the bus can never be left to die in GC at exit.
+            g._safe_disable_close()
     run(go)
 
 
