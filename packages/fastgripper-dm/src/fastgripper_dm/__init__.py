@@ -8,5 +8,5 @@ in v0.1.
 from .facade import FastGripper, HomingError
 from .profile import GripperProfile, PRESETS, TMAX_CAP
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = ["FastGripper", "HomingError", "GripperProfile", "PRESETS", "TMAX_CAP", "__version__"]

@@ -15,7 +15,7 @@ from fastgripper_dm.tools.preflight import evaluate
 
 
 def test_version():
-    assert fastgripper_dm.__version__ == "0.1.0"
+    assert fastgripper_dm.__version__ == "0.1.1"
 
 
 # ---- protocol -------------------------------------------------------------
