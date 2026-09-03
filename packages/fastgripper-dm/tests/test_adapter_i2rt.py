@@ -97,9 +97,10 @@ def test_adapter_never_writes_to_the_robot(tmp_path):
 
 
 def test_connect_refuses_park_mismatch(tmp_path):
-    # robot sits 3 rad (wrapped) away from last_wrapped -> no silent adoption
+    # robot sits 6 rad (wrapped) away from last_wrapped, past the 3.0 rad
+    # park_tolerance_rad -> no silent adoption
     with pytest.raises(ValueError, match="park"):
-        connected(tmp_path, grip_norm=(4.0 + POS_WINDOW) / SPAN)
+        connected(tmp_path, grip_norm=(7.0 + POS_WINDOW) / SPAN)
 
 
 def test_park_persists(tmp_path):

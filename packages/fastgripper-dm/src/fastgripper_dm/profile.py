@@ -14,9 +14,12 @@ class GripperProfile:
     closed_only: bool = False
     single_touch: bool = False
     span_from_closed: float = 30.0     # rad; conservative UNDERestimate of travel
-    contact_torque: float = 0.30       # Nm; must exceed the unit's free-run p95
-    probe_tmax: float = 0.5            # Nm cap during probing
-    probe_vel: float = 0.8             # rad/s slow datum touch
+    # 2026-09-02 bench (DM-J4310 worm gripper): free-run friction p95 measured
+    # 0.36-0.44 Nm, and the old probe caps allowed at most kd*v = 0.48 Nm, so the
+    # probe tripped "contact" on friction at the start position. Raised together.
+    contact_torque: float = 0.8        # Nm; must exceed the unit's free-run p95
+    probe_tmax: float = 1.0            # Nm cap during probing
+    probe_vel: float = 2.0             # rad/s datum touch
     seek_vel: float = 2.5              # rad/s fast seek
     margin: float = 0.75               # rad inside the physical stops
     backoff: float = 2.0               # rad between touches
@@ -26,7 +29,10 @@ class GripperProfile:
     sw_kp: float = 24.0                # software position-loop gain (1/s)
     stall_torque_frac: float = 0.75    # stall when |torque| > frac * tmax_nm ...
     stall_time_s: float = 0.4          # ... for this long
-    park_tolerance_rad: float = 0.35   # PROVISIONAL: boot wrapped vs last_wrapped (spec §10)
+    # 2026-09-02 bench: the mechanism relaxes ~1.8 rad after a hard close + disable,
+    # so 0.35 rejected every legitimate park; 3.0 covers it and is still far below
+    # the 25-rad wrap alias, where a false match would be indistinguishable.
+    park_tolerance_rad: float = 3.0    # boot wrapped vs last_wrapped (spec §10)
     watchdog_ms: int = 8000            # RID 9 raw value; unit under investigation (2026-08-30)
     close_dir: int = 1                 # velocity sign that closes the jaws
 
@@ -37,6 +43,12 @@ class GripperProfile:
             raise ValueError("close_dir must be +1 or -1")
         if self.span_from_closed <= 0 or self.vmax <= 0 or self.sw_kp <= 0:
             raise ValueError("span_from_closed, vmax, sw_kp must be positive")
+        if not (self.contact_torque < self.probe_tmax <= TMAX_CAP):
+            # A probe that cannot produce more torque than its own contact
+            # threshold can never detect the stop; above the cap it snaps the worm.
+            raise ValueError(
+                f"probe caps must satisfy contact_torque ({self.contact_torque}) < "
+                f"probe_tmax ({self.probe_tmax}) <= {TMAX_CAP}")
 
     def to_dict(self) -> dict:
         return asdict(self)

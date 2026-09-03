@@ -10,6 +10,7 @@ this fires -- finalization has nothing left to do, so skip it.
 import os
 import sys
 
+from ..facade import HomingError
 from ..port import PortError
 
 
@@ -17,7 +18,10 @@ def run(main) -> None:
     code = 0
     try:
         main()
-    except PortError as e:
+    except (PortError, HomingError) as e:
+        # A HomingError that escaped here used to go through normal interpreter
+        # finalization, which is exactly the libusb-abort path this wrapper exists
+        # to avoid; report it and take the os._exit route like any other tool error.
         print(str(e), file=sys.stderr)
         code = 1
     except TimeoutError as e:
