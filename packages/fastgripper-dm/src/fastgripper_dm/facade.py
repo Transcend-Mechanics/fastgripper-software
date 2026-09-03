@@ -3,6 +3,7 @@ GripperController, and the cal entry's park lifecycle."""
 
 from __future__ import annotations
 
+import sys
 import time
 
 from .calstore import default_cal_path, entry_profile, get_entry, load_store, save_store
@@ -20,6 +21,11 @@ def _wrapped_dist(a: float, b: float) -> float:
     return min(d, SPAN - d)
 
 
+def _fold(x: float) -> float:
+    """Fold a quantity known only modulo SPAN into the nearest +/-SPAN/2 window."""
+    return (x + SPAN / 2) % SPAN - SPAN / 2
+
+
 class FastGripper:
     def __init__(self, port: MotorPort | None = None, interface: str | None = None,
                  channel: str | None = None, gripper: str | None = None,
@@ -35,6 +41,12 @@ class FastGripper:
         self._store = None
         self._entry = None
         self._connected = False
+        # True once this session has put the multi-turn tracker into the same
+        # frame the cal store uses (park adoption, assume_closed, or homing).
+        # Until then the tracker's zero is wherever the shaft happened to boot,
+        # and nothing derived from it may be written back to the store.
+        # Same class of guard as adapters/i2rt.py.
+        self._anchored = False
 
     @classmethod
     def standalone(cls, interface=None, channel=None, gripper=None, cal_path=None, home="auto"):
@@ -47,6 +59,7 @@ class FastGripper:
 
     # --- lifecycle ---
     def connect(self) -> None:
+        self._anchored = False
         self._store = load_store(self._cal_path)
         name, self._entry = get_entry(self._store, self._gripper_name)
         self._gripper_name = name
@@ -69,9 +82,24 @@ class FastGripper:
             if mode == "auto":
                 lw = self._entry.get("last_wrapped")
                 if lw is not None and _wrapped_dist(boot.position, lw) <= profile.park_tolerance_rad:
-                    self.ctrl.adopt_park(self._entry["last_position"])
+                    # The mechanism relaxes off the parked position while the motor
+                    # is disabled (measured 1.7-1.8 rad after a hard close on
+                    # 2026-09-02). Adopt the saved park CORRECTED by that drift --
+                    # adopting the stale value put the closed goal ~1 rad past the
+                    # physical stop and pushed at the torque cap until timeout.
+                    # boot.position is wrapped, so the drift is only known modulo
+                    # SPAN; fold it into the nearest window.
+                    delta = _fold(boot.position - lw)
+                    if abs(delta) > 0.1:
+                        print(f"park drift {delta:+.2f} rad: adopting "
+                              f"{self._entry['last_position'] + delta:+.2f} rad "
+                              f"(saved {self._entry['last_position']:+.2f})", file=sys.stderr)
+                    self.ctrl.adopt_park(self._entry["last_position"] + delta)
                     self.ctrl.tick(boot, 0.0)
+                    self._anchored = True
                 elif self._auto_fallback == "stall":
+                    print(f"gripper is not at its park (wrapped {boot.position:+.2f} vs "
+                          f"saved {lw}) -- homing against the closed stop", file=sys.stderr)
                     self.home_against_stop()
                 else:
                     raise HomingError(
@@ -81,6 +109,7 @@ class FastGripper:
             elif mode == "assume_closed":
                 self.ctrl.tick(boot, 0.0)
                 self.ctrl.anchor(self._entry["closed"])
+                self._anchored = True
             elif mode == "stall":
                 self.home_against_stop()
             elif mode == "off":
@@ -96,6 +125,20 @@ class FastGripper:
             raise
         self._connected = True
 
+    def _shutdown_bus(self) -> None:
+        """Shut the python-can bus down explicitly, so it never dies in GC at
+        interpreter exit. On macOS libusb aborts there (SIGABRT) and the adapter
+        is left wedged -- "bus opened but passes NO frames" for the next session.
+        Best-effort: not every MotorPort owns a bus, and a dead bus must not
+        turn a teardown into an exception."""
+        bus = getattr(getattr(self.port, "motor", None), "bus", None)
+        if bus is None:
+            return
+        try:
+            bus.shutdown()
+        except Exception:
+            pass
+
     def _safe_disable_close(self) -> None:
         try:
             self.port.disable()
@@ -105,6 +148,7 @@ class FastGripper:
             self.port.close()
         except Exception:
             pass
+        self._shutdown_bus()
 
     def home_against_stop(self) -> None:
         """Probe toward the closed stop under the profile's probe caps, anchor
@@ -150,10 +194,15 @@ class FastGripper:
             time.sleep(0.02)
         stop_here = tracker.position
         offset = self._entry["stop_closed"] - stop_here
+        # The probe tracker starts from the RAW wrapped boot position, so the true
+        # offset is only known modulo one +/-12.5 rad window. Fold it BEFORE the
+        # friction sanity check -- unfolded, a legitimate re-home at the stop read
+        # as a +/-25 rad offset and every re-home aborted (2026-09-02).
+        offset = _fold(offset)
         if abs(offset) > 3 * 6.283185 + 1.0:
             raise HomingError(f"re-anchor offset {offset:+.2f} rad exceeds ~3 turns -- probe "
                               f"likely triggered on friction; raise contact_torque and retry")
-        anchored = stop_here + offset
+        anchored = self._entry["stop_closed"]     # the stop IS the datum
         lo = min(self._entry["open"], self._entry["closed"]) - 2.0
         hi = max(self._entry["open"], self._entry["closed"]) + 2.0
         if not (lo <= anchored <= hi):
@@ -161,6 +210,7 @@ class FastGripper:
         # back off the stop, then hand the anchored frame to the main controller
         back_goal = anchored - d * p.margin
         self.ctrl.adopt_park(anchored)
+        self._anchored = True
         self.ctrl.tick(fb, 0.0)
         self.ctrl.goto_rad(back_goal)
         self.wait(timeout=10.0)
@@ -199,6 +249,14 @@ class FastGripper:
 
     # --- park / teardown ---
     def park(self) -> None:
+        if not self._anchored:
+            # home="off": the tracker is not anchored, so last_position would be
+            # an arbitrary frame. Saving it lets the NEXT session adopt it and
+            # drive the (non-back-drivable) worm into a hard stop at the full
+            # torque cap. Save nothing. Mirrors adapters/i2rt.py.
+            print("park: tracker is not anchored (home=off) -- not saving "
+                  "last_position; re-home before the next session", file=sys.stderr)
+            return
         if self.ctrl and self.ctrl.tracker.seen:
             self._entry.update(self.ctrl.park_fields())
             self._entry["parked_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -217,6 +275,7 @@ class FastGripper:
                 self.port.close()
             except PortError:
                 pass
+            self._shutdown_bus()
 
     def __enter__(self):
         if not self._connected:

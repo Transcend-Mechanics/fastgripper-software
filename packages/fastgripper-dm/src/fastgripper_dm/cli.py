@@ -170,6 +170,10 @@ def cmd_status(args, extra):
         print("NOTE: 'off' mode has no absolute frame; use preflight/park for trusted state")
         g.port.disable()
         g.port.close()
+        # Shut the bus down as disconnect() would, but WITHOUT calling
+        # disconnect(): 'off' mode has no absolute frame, so its park must not
+        # be saved. See FastGripper._shutdown_bus for why this cannot be left to GC.
+        g._shutdown_bus()
     run(go)
 
 
